@@ -28,6 +28,7 @@ from .value import (
     CanAssign,
     CanAssignContext,
     CanAssignError,
+    _LazyStr,
     KnownValue,
     SubclassValue,
     TypedValue,
@@ -119,7 +120,7 @@ class TypeObject:
         if isinstance(self.typ, super):
             if isinstance(other.typ, super):
                 return {}
-            return CanAssignError(f"Cannot assign to super object {self}")
+            return CanAssignError(_LazyStr("Cannot assign to super object %s", self))
         if not self.is_protocol:
             if other.is_protocol:
                 if self.typ is object:
@@ -130,14 +131,14 @@ class TypeObject:
             if isinstance(self.typ, str):
                 if safe_in(self.typ, other.base_classes):
                     return {}
-                return CanAssignError(f"Cannot assign {other_val} to {self}")
+                return CanAssignError(_LazyStr("Cannot assign %s to %s", other_val, self))
             else:
                 for base in other.base_classes:
                     if base is self.typ:
                         return {}
                     if isinstance(base, type) and safe_issubclass(base, self.typ):
                         return {}
-                return CanAssignError(f"Cannot assign {other_val} to {self}")
+                return CanAssignError(_LazyStr("Cannot assign %s to %s", other_val, self))
         else:
             if isinstance(other.typ, super):
                 return CanAssignError(
@@ -189,7 +190,7 @@ class TypeObject:
             else:
                 actual = ctx.get_attribute_from_value(other_val, member)
             if actual is UNINITIALIZED_VALUE:
-                can_assign = CanAssignError(f"{other_val} has no attribute {member!r}")
+                can_assign = CanAssignError(_LazyStr("%s has no attribute %r", other_val, member))
             else:
                 can_assign = expected.can_assign(actual, ctx)
                 if isinstance(can_assign, CanAssignError):

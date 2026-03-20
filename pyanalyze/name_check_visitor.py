@@ -169,6 +169,7 @@ from .value import (
     CallableValue,
     CanAssign,
     CanAssignError,
+    _LazyStr,
     ConstraintExtension,
     CustomCheckExtension,
     DefiniteValueExtension,
@@ -1544,8 +1545,8 @@ class NameCheckVisitor(node_visitor.ReplacingNodeVisitor):
             if isinstance(can_assign, CanAssignError):
                 error = CanAssignError(
                     children=[
-                        CanAssignError(f"Base class: {self.display_value(base_value)}"),
-                        CanAssignError(f"Child class: {self.display_value(value)}"),
+                        CanAssignError(_LazyStr("Base class: %s", self.display_value(base_value))),
+                        CanAssignError(_LazyStr("Child class: %s", self.display_value(value))),
                         can_assign,
                     ]
                 )
@@ -1628,13 +1629,13 @@ class NameCheckVisitor(node_visitor.ReplacingNodeVisitor):
             return {}
         child_sig = self.signature_from_value(child_value)
         if not isinstance(child_sig, (Signature, OverloadedSignature)):
-            return CanAssignError(f"{child_value} is not callable")
+            return CanAssignError(_LazyStr("%s is not callable", child_value))
         base_bound = base_sig.bind_self(ctx=self)
         if base_bound is None:
             return {}
         child_bound = child_sig.bind_self(ctx=self)
         if child_bound is None:
-            return CanAssignError(f"{child_value} is missing a 'self' argument")
+            return CanAssignError(_LazyStr("%s is missing a 'self' argument", child_value))
         return base_bound.can_assign(child_bound, self)
 
     def _check_for_class_variable_redefinition(
@@ -6073,17 +6074,32 @@ except ImportError:
 
 else:
 
+    _pydantic_cache: dict[type, bool] = {}
+
     def _is_safe_pydantic_class(typ: type) -> bool:
-        if not issubclass(typ, BaseModel):
+        try:
+            return _pydantic_cache[typ]
+        except KeyError:
+            pass
+        try:
+            is_base = issubclass(typ, BaseModel)
+        except TypeError:
+            _pydantic_cache[typ] = False
+            return False
+        if not is_base:
+            _pydantic_cache[typ] = False
             return False
         # Pydantic 1 is unsupported but we shouldn't crash
         if not safe_hasattr(typ, "model_config"):
+            _pydantic_cache[typ] = False
             return False
         # Pydantic classes have a __getattr__ that looks at two fields,
         # __private_attributes__ and __pydantic_extra__. The latter is
         # used only if this config is set. The former doesn't seem to have
         # a way to detect from the class whether it will be used.
-        return typ.model_config.get("extra") != "allow"
+        result = typ.model_config.get("extra") != "allow"
+        _pydantic_cache[typ] = result
+        return result
 
 
 def _has_only_known_attributes(

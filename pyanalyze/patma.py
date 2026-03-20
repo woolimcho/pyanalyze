@@ -40,6 +40,7 @@ from .value import (
     CanAssign,
     CanAssignContext,
     CanAssignError,
+    _LazyStr,
     CustomCheckExtension,
     DictIncompleteValue,
     KnownValue,
@@ -486,7 +487,7 @@ def get_match_args(
         return [SpecialPositionalMatch.self]
     match_args_value = visitor.get_attribute(Composite(cls), "__match_args__")
     if match_args_value is UNINITIALIZED_VALUE:
-        return CanAssignError(f"{cls} has no attribute __match_args__")
+        return CanAssignError(_LazyStr("%s has no attribute __match_args__", cls))
     match_args_value = replace_known_sequence_value(match_args_value)
     if isinstance(match_args_value, SequenceValue):
         if match_args_value.typ is not tuple:

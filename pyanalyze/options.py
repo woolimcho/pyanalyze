@@ -10,7 +10,7 @@ import pathlib
 import sys
 from collections import defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Generic, Optional, TypeVar
 
@@ -268,6 +268,9 @@ class PyObjectSequenceOption(ConcatenatedOption[T]):
 class Options:
     options: Mapping[str, Sequence[ConfigOption[Any]]]
     module_path: ModulePath = ()
+    _cache: dict[str, Any] = field(
+        default_factory=dict, init=False, repr=False, compare=False, hash=False
+    )
 
     @classmethod
     def from_option_list(
@@ -290,21 +293,24 @@ class Options:
         return Options(self.options, module_path)
 
     def get_value_for(self, option: type[ConfigOption[T]]) -> T:
+        name = option.name
         try:
-            return self._get_value_for_no_default(option)
+            return self._cache[name]
+        except KeyError:
+            pass
+        try:
+            result = self._get_value_for_no_default(option)
         except NotFound:
-            return option.default_value
+            result = option.default_value
+        self._cache[name] = result
+        return result
 
     def _get_value_for_no_default(self, option: type[ConfigOption[T]]) -> T:
         instances = [*self.options.get(option.name, ()), option(option.default_value)]
         return option.get_value_from_instances(instances, self.module_path)
 
     def is_error_code_enabled(self, code: Error) -> bool:
-        option = ConfigOption.registry[code.name]
-        try:
-            return self._get_value_for_no_default(option)
-        except NotFound:
-            return option.default_value
+        return self.get_value_for(ConfigOption.registry[code.name])
 
     def is_error_code_enabled_anywhere(self, code: Error) -> bool:
         option = ConfigOption.registry[code.name]

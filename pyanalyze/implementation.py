@@ -52,6 +52,7 @@ from .value import (
     CallableValue,
     CanAssignContext,
     CanAssignError,
+    _LazyStr,
     CustomCheckExtension,
     DictIncompleteValue,
     GenericValue,
@@ -1050,14 +1051,14 @@ def _unpack_iterable_of_pairs(
     if isinstance(concrete, Value):
         vals = unpack_values(concrete, ctx, 2)
         if isinstance(vals, CanAssignError):
-            return CanAssignError(f"{concrete} is not a key-value pair", [vals])
+            return CanAssignError(_LazyStr("%s is not a key-value pair", concrete), [vals])
         return [KVPair(vals[0], vals[1], is_many=True)]
     kv_pairs = []
     for i, subval in enumerate(concrete):
         vals = unpack_values(subval, ctx, 2)
         if isinstance(vals, CanAssignError):
-            child = CanAssignError(f"{concrete} is not a key-value pair", [vals])
-            return CanAssignError(f"In member {i} of iterable {val}", [child])
+            child = CanAssignError(_LazyStr("%s is not a key-value pair", concrete), [vals])
+            return CanAssignError(_LazyStr("In member %s of iterable %s", i, val), [child])
         kv_pairs.append(KVPair(vals[0], vals[1]))
     return kv_pairs
 
@@ -1368,7 +1369,7 @@ def _reveal_locals_impl(ctx: CallContext) -> Value:
         details = []
         for varname in scope.all_variables():
             val, _, _ = scope.get(varname, ctx.node, ctx.visitor.state)
-            details.append(CanAssignError(f"{varname}: {val}"))
+            details.append(CanAssignError(_LazyStr("%s: %s", varname, val)))
         ctx.show_error(
             "Revealed local types are:",
             ErrorCode.reveal_type,
@@ -2267,7 +2268,7 @@ def _re_impl_with_pattern(ctx: CallContext) -> Value:
     pattern = ctx.vars["pattern"]
     error = check_regex_in_value(pattern)
     if error is not None:
-        ctx.show_error(error.message, error_code=ErrorCode.invalid_regex, arg="pattern")
+        ctx.show_error(str(error.message), error_code=ErrorCode.invalid_regex, arg="pattern")
     return ctx.inferred_return_value
 
 

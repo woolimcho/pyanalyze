@@ -29,6 +29,7 @@ from .value import (
     CanAssign,
     CanAssignContext,
     CanAssignError,
+    _LazyStr,
     KnownValue,
     MultiValuedValue,
     SequenceValue,
@@ -91,9 +92,9 @@ class ArgumentKindCondition(Condition):
         maybe_not = " not" if negated else ""
         text = f"Argument {self.argument} was{maybe_not} provided"
         if self.function == "is_positional":
-            return CanAssignError(f"{text} as a positional argument")
+            return CanAssignError(_LazyStr("%s as a positional argument", text))
         elif self.function == "is_keyword":
-            return CanAssignError(f"{text} as a keyword argument")
+            return CanAssignError(_LazyStr("%s as a keyword argument", text))
         else:
             return CanAssignError(text)
 
@@ -110,7 +111,7 @@ class PlatformCondition(Condition):
         else:
             op = self.op
         text = _OP_TO_DATA[op].text
-        return CanAssignError(f"Platform ({self.actual}) {text} {self.expected}")
+        return CanAssignError(_LazyStr("Platform (%s) %s %s", self.actual, text, self.expected))
 
 
 @dataclass

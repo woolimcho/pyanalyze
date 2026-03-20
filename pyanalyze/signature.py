@@ -68,6 +68,7 @@ from .value import (
     CanAssign,
     CanAssignContext,
     CanAssignError,
+    _LazyStr,
     ConstraintExtension,
     DictIncompleteValue,
     GenericValue,
@@ -1453,7 +1454,7 @@ class Signature:
                 can_assign = self.can_assign(sig, ctx)
                 if isinstance(can_assign, CanAssignError):
                     errors.append(
-                        CanAssignError(f"overload {sig} is incompatible", [can_assign])
+                        CanAssignError(_LazyStr("overload %s is incompatible", sig), [can_assign])
                     )
                 else:
                     return can_assign
@@ -1544,7 +1545,7 @@ class Signature:
                             f" {my_param.name!r}"
                         )
                     if my_param.default is not None and their_params[i].default is None:
-                        return CanAssignError(f"param {my_param.name!r} has no default")
+                        return CanAssignError(_LazyStr("param %r has no default", my_param.name))
                     their_annotation = their_params[i].get_annotation()
                     tv_map = their_annotation.can_assign(my_annotation, ctx)
                     if isinstance(tv_map, CanAssignError):
@@ -1701,12 +1702,12 @@ class Signature:
                         param.name not in consumed_positional
                         and param.name not in consumed_keyword
                     ):
-                        return CanAssignError(f"takes extra parameter {param.name!r}")
+                        return CanAssignError(_LazyStr("takes extra parameter %r", param.name))
                 elif param.kind is ParameterKind.KEYWORD_ONLY:
                     if param.name not in consumed_keyword:
-                        return CanAssignError(f"takes extra parameter {param.name!r}")
+                        return CanAssignError(_LazyStr("takes extra parameter %r", param.name))
                 elif param.kind is ParameterKind.PARAM_SPEC:
-                    return CanAssignError(f"takes extra ParamSpec {param!r}")
+                    return CanAssignError(_LazyStr("takes extra ParamSpec %r", param))
                 elif param.kind is ParameterKind.ELLIPSIS:
                     continue
                 else:
@@ -2487,7 +2488,7 @@ class OverloadedSignature:
                     error["e"],
                     [CanAssignError(error["detail"])] if error["detail"] else [],
                 )
-                details.append(CanAssignError(f"In overload {sig}", [inner]))
+                details.append(CanAssignError(_LazyStr("In overload %s", sig), [inner]))
         return CanAssignError(children=details)
 
     def substitute_typevars(self, typevars: TypeVarMap) -> "OverloadedSignature":

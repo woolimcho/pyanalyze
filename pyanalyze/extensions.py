@@ -134,7 +134,7 @@ class NoAny(CustomCheck):
             vals = pyanalyze.value.flatten_values(value)
         for subval in vals:
             if self._is_disallowed(subval):
-                return pyanalyze.value.CanAssignError(f"Value may not be {subval}")
+                return pyanalyze.value.CanAssignError(pyanalyze.value._LazyStr("Value may not be %s", subval))
         return {}
 
     def _is_disallowed(self, value: "Value") -> bool:

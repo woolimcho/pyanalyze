@@ -31,6 +31,32 @@ from itertools import chain
 from types import FunctionType, ModuleType
 from typing import Any, Callable, Optional, TypeVar, Union
 
+# Slots kwarg for @dataclass; requires Python 3.10+
+_SLOTS = {"slots": True}
+
+
+class _LazyStr:
+    """Defers string formatting until __str__ is called.
+
+    Used to avoid expensive Value.__str__() calls in CanAssignError messages
+    that may never be displayed.
+    """
+
+    __slots__ = ("_fmt", "_args", "_cached")
+
+    def __init__(self, fmt: str, *args: object) -> None:
+        self._fmt = fmt
+        self._args = args
+        self._cached: Optional[str] = None
+
+    def __str__(self) -> str:
+        if self._cached is None:
+            self._cached = self._fmt % self._args
+        return self._cached
+
+    def __bool__(self) -> bool:
+        return True
+
 import qcore
 from typing_extensions import ParamSpec, Protocol, assert_never
 
@@ -125,7 +151,7 @@ class Value:
             return {}
         elif self == other:
             return {}
-        return CanAssignError(f"Cannot assign {other} to {self}")
+        return CanAssignError(_LazyStr("Cannot assign %s to %s", other, self))
 
     def can_overlap(
         self, other: "Value", ctx: "CanAssignContext", mode: OverlapMode
@@ -155,7 +181,7 @@ class Value:
             return self.can_overlap(other.get_fallback_value(), ctx, mode)
         if isinstance(other, TypeAliasValue):
             return self.can_overlap(other.get_value(), ctx, mode)
-        return CanAssignError(f"{self} and {other} cannot overlap")
+        return CanAssignError(_LazyStr("%s and %s cannot overlap", self, other))
 
     def is_assignable(self, other: "Value", ctx: "CanAssignContext") -> bool:
         """Similar to :meth:`can_assign` but returns a bool for simplicity."""
@@ -303,7 +329,7 @@ class CanAssignContext(Protocol):
         return str(value)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class CanAssignError:
     """A type checking error message with nested details.
 
@@ -312,7 +338,7 @@ class CanAssignError:
 
     """
 
-    message: str = ""
+    message: object = ""
     children: list["CanAssignError"] = field(default_factory=list)
     error_code: Optional[Error] = None
 
@@ -322,7 +348,7 @@ class CanAssignError:
             child.display(depth=depth + 2) for child in self.children
         )
         if self.message:
-            message = textwrap.indent(self.message, " " * depth)
+            message = textwrap.indent(str(self.message), " " * depth)
             return f"{message}\n{child_result}"
         else:
             return child_result
@@ -408,7 +434,7 @@ class AnySource(enum.Enum):
     """An unresolved import."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class AnyValue(Value):
     """An unknown value, equivalent to ``typing.Any``."""
 
@@ -423,7 +449,7 @@ class AnyValue(Value):
 
     def can_assign(self, other: Value, ctx: CanAssignContext) -> CanAssign:
         if isinstance(other, (AnnotatedValue, MultiValuedValue)):
-            return super().can_assign(other, ctx)
+            return super(AnyValue, self).can_assign(other, ctx)
         return {}  # Always allowed
 
     def can_overlap(
@@ -441,7 +467,7 @@ In the future, this should be replaced with instances of
 """
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class VoidValue(Value):
     """Dummy Value used as the inferred type of AST nodes that
     do not represent expressions.
@@ -461,7 +487,7 @@ class VoidValue(Value):
 VOID = VoidValue()
 
 
-@dataclass
+@dataclass(**_SLOTS)
 class TypeAlias:
     evaluator: Callable[[], Value]
     """Callable that evaluates the value."""
@@ -483,7 +509,7 @@ class TypeAlias:
         return self.type_params
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class TypeAliasValue(Value):
     """Value representing a type alias."""
 
@@ -535,7 +561,7 @@ class TypeAliasValue(Value):
         return self.get_value().can_overlap(other, ctx, mode)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class UninitializedValue(Value):
     """Value for variables that have not been initialized.
 
@@ -551,7 +577,7 @@ UNINITIALIZED_VALUE = UninitializedValue()
 """The only instance of :class:`UninitializedValue`."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class KnownValue(Value):
     """Equivalent to ``typing.Literal``. Represents a specific value.
 
@@ -590,7 +616,7 @@ class KnownValue(Value):
                 return {}
             if safe_equals(self.val, other.val) and type(self.val) is type(other.val):
                 return {}
-        return super().can_assign(other, ctx)
+        return super(KnownValue, self).can_assign(other, ctx)
 
     def can_overlap(
         self, other: Value, ctx: CanAssignContext, mode: OverlapMode
@@ -605,11 +631,11 @@ class KnownValue(Value):
                 # we get lots of false positives.
                 if type(self.val) is type(other.val):
                     return None
-                return CanAssignError(f"{self} and {other} cannot overlap")
+                return CanAssignError(_LazyStr("%s and %s cannot overlap", self, other))
             elif mode is OverlapMode.MATCH:
                 if safe_equals(self.val, other.val):
                     return None
-                return CanAssignError(f"{self} and {other} cannot overlap")
+                return CanAssignError(_LazyStr("%s and %s cannot overlap", self, other))
             elif mode is OverlapMode.EQ:
                 # For EQ mode we're more permissive and allow overlapping types
                 return TypedValue(type(self.val)).can_overlap(
@@ -617,7 +643,7 @@ class KnownValue(Value):
                 )
             else:
                 assert_never(mode)
-        return super().can_overlap(other, ctx, mode)
+        return super(KnownValue, self).can_overlap(other, ctx, mode)
 
     def __eq__(self, other: Value) -> bool:
         return (
@@ -678,7 +704,7 @@ def get_fully_qualified_name(obj: Union[FunctionType, type]) -> str:
     return name
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class KnownValueWithTypeVars(KnownValue):
     """Subclass of KnownValue that records a TypeVar substitution."""
 
@@ -686,17 +712,17 @@ class KnownValueWithTypeVars(KnownValue):
     """TypeVars substituted on this value."""
 
     def __str__(self) -> str:
-        return super().__str__() + f" with typevars {self.typevars}"
+        return super(KnownValueWithTypeVars, self).__str__() + f" with typevars {self.typevars}"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class SyntheticModuleValue(Value):
     """Represents a module that exists only in stub files."""
 
     module_path: Sequence[str]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class UnboundMethodValue(Value):
     """Value that represents a method on an underlying :class:`Value`.
 
@@ -790,7 +816,7 @@ class UnboundMethodValue(Value):
         )
 
 
-@dataclass(unsafe_hash=True)
+@dataclass(unsafe_hash=True, **_SLOTS)
 class TypedValue(Value):
     """Value for which we know the type. This is equivalent to simple type
     annotations: an annotation of ``int`` will yield ``TypedValue(int)`` during
@@ -830,7 +856,7 @@ class TypedValue(Value):
             return can_assign
         elif isinstance(other, TypedValue):
             if self.literal_only and not other.literal_only:
-                return CanAssignError(f"{other} is not a literal")
+                return CanAssignError(_LazyStr("%s is not a literal", other))
             return self_tobj.can_assign(self, other, ctx)
         elif isinstance(other, SubclassValue):
             if isinstance(other.typ, TypedValue):
@@ -840,17 +866,17 @@ class TypedValue(Value):
         elif isinstance(other, UnboundMethodValue):
             if self_tobj.can_be_unbound_method():
                 return {}
-        return super().can_assign(other, ctx)
+        return super(TypedValue, self).can_assign(other, ctx)
 
     def can_assign_thrift_enum(self, other: Value, ctx: CanAssignContext) -> CanAssign:
         if isinstance(other, AnyValue) and not ctx.should_exclude_any():
             ctx.record_any_used()
             return {}
         elif isinstance(other, TypeVarValue):
-            return super().can_assign(other, ctx)
+            return super(TypedValue, self).can_assign(other, ctx)
         elif isinstance(other, KnownValue):
             if not isinstance(other.val, int):
-                return CanAssignError(f"{other} is not an int")
+                return CanAssignError(_LazyStr("%s is not an int", other))
             assert hasattr(self.typ, "_VALUES_TO_NAMES"), f"{self} is not a Thrift enum"
             if other.val in self.typ._VALUES_TO_NAMES:
                 return {}
@@ -868,11 +894,11 @@ class TypedValue(Value):
                     return can_assign
                 bounds_maps.append(can_assign)
             if not bounds_maps:
-                return CanAssignError(f"Cannot assign {other} to Thrift enum {self}")
+                return CanAssignError(_LazyStr("Cannot assign %s to Thrift enum %s", other, self))
             return unify_bounds_maps(bounds_maps)
         elif isinstance(other, AnnotatedValue):
             return self.can_assign_thrift_enum(other.value, ctx)
-        return CanAssignError(f"Cannot assign {other} to Thrift enum {self}")
+        return CanAssignError(_LazyStr("Cannot assign %s to Thrift enum %s", other, self))
 
     def can_overlap(
         self, other: Value, ctx: CanAssignContext, mode: OverlapMode
@@ -885,12 +911,12 @@ class TypedValue(Value):
                     return can_assign
                 return None
             else:
-                return super().can_overlap(other, ctx, mode)
+                return super(TypedValue, self).can_overlap(other, ctx, mode)
         elif isinstance(other, KnownValue):
             if mode is OverlapMode.IS:
                 if self_tobj.is_instance(other.val):
                     return None
-                return CanAssignError(f"{self} and {other} cannot overlap")
+                return CanAssignError(_LazyStr("%s and %s cannot overlap", self, other))
             return self.can_overlap(TypedValue(type(other.val)), ctx, mode)
         elif isinstance(other, TypedValue):
             left_errors = self_tobj.can_assign(self, other, ctx)
@@ -917,7 +943,7 @@ class TypedValue(Value):
             else:
                 return None
         else:
-            return super().can_overlap(other, ctx, mode)
+            return super(TypedValue, self).can_overlap(other, ctx, mode)
 
     def get_generic_args_for_type(
         self, typ: Union[type, super, str], ctx: CanAssignContext
@@ -967,7 +993,7 @@ class TypedValue(Value):
         return stringify_object(self.typ) + suffix
 
 
-@dataclass(unsafe_hash=True, init=False)
+@dataclass(unsafe_hash=True, init=False, **_SLOTS)
 class NewTypeValue(TypedValue):
     """A wrapper around an underlying type.
 
@@ -984,7 +1010,7 @@ class NewTypeValue(TypedValue):
     """Underlying ``NewType`` object."""
 
     def __init__(self, newtype: Any) -> None:
-        super().__init__(newtype.__supertype__)
+        super(NewTypeValue, self).__init__(newtype.__supertype__)
         self.name = newtype.__name__
         self.newtype = newtype
 
@@ -992,16 +1018,16 @@ class NewTypeValue(TypedValue):
         if isinstance(other, NewTypeValue):
             if self.newtype is other.newtype:
                 return {}
-            return CanAssignError(f"NewTypes {self} and {other} are not compatible")
+            return CanAssignError(_LazyStr("NewTypes %s and %s are not compatible", self, other))
         # Allow e.g. int for a NewType over int, but not a subtype of int such as an
         # IntEnum
         elif isinstance(other, TypedValue):
             if self.typ is not other.typ:
-                return CanAssignError(f"Cannot assign {other} to {self}")
+                return CanAssignError(_LazyStr("Cannot assign %s to %s", other, self))
         elif isinstance(other, KnownValue):
             if self.typ is not type(other.val):
-                return CanAssignError(f"Cannot assign {other} to {self}")
-        return super().can_assign(other, ctx)
+                return CanAssignError(_LazyStr("Cannot assign %s to %s", other, self))
+        return super(NewTypeValue, self).can_assign(other, ctx)
 
     def can_overlap(
         self, other: Value, ctx: CanAssignContext, mode: OverlapMode
@@ -1009,14 +1035,14 @@ class NewTypeValue(TypedValue):
         if isinstance(other, NewTypeValue):
             if self.newtype is other.newtype:
                 return None
-            return CanAssignError(f"NewTypes {self} and {other} cannot overlap")
-        return super().can_overlap(other, ctx, mode)
+            return CanAssignError(_LazyStr("NewTypes %s and %s cannot overlap", self, other))
+        return super(NewTypeValue, self).can_overlap(other, ctx, mode)
 
     def __str__(self) -> str:
         return f"NewType({self.name!r}, {stringify_object(self.typ)})"
 
 
-@dataclass(unsafe_hash=True, init=False)
+@dataclass(unsafe_hash=True, init=False, **_SLOTS)
 class GenericValue(TypedValue):
     """Subclass of :class:`TypedValue` that can represent generics.
 
@@ -1028,7 +1054,7 @@ class GenericValue(TypedValue):
     """The generic arguments to the type."""
 
     def __init__(self, typ: Union[type, str], args: Iterable[Value]) -> None:
-        super().__init__(typ)
+        super(GenericValue, self).__init__(typ)
         self.args = tuple(args)
 
     def __str__(self) -> str:
@@ -1049,7 +1075,7 @@ class GenericValue(TypedValue):
             # If we don't think it's a generic base, try super;
             # runtime isinstance() may disagree.
             if generic_args is None or len(self.args) != len(generic_args):
-                return super().can_assign(original_other, ctx)
+                return super(GenericValue, self).can_assign(original_other, ctx)
             bounds_maps = []
             for i, (my_arg, their_arg) in enumerate(zip(self.args, generic_args)):
                 can_assign = my_arg.can_assign(their_arg, ctx)
@@ -1057,17 +1083,17 @@ class GenericValue(TypedValue):
                     return self.maybe_specify_error(i, other, can_assign, ctx)
                 bounds_maps.append(can_assign)
             if not bounds_maps:
-                return CanAssignError(f"Cannot assign {other} to {self}")
+                return CanAssignError(_LazyStr("Cannot assign %s to %s", other, self))
             return unify_bounds_maps(bounds_maps)
 
-        return super().can_assign(original_other, ctx)
+        return super(GenericValue, self).can_assign(original_other, ctx)
 
     def can_overlap(
         self, other: Value, ctx: CanAssignContext, mode: OverlapMode
     ) -> Optional[CanAssignError]:
         if isinstance(other, GenericValue) and self.typ is other.typ:
             if len(self.args) != len(other.args):
-                return CanAssignError(f"Cannot overlap {self} and {other}")
+                return CanAssignError(_LazyStr("Cannot overlap %s and %s", self, other))
             for i, (my_arg, their_arg) in enumerate(zip(self.args, other.args)):
                 maybe_error = my_arg.can_overlap(their_arg, ctx, mode)
                 if maybe_error is not None:
@@ -1075,7 +1101,7 @@ class GenericValue(TypedValue):
                         f"In generic argument {i} to {self}", [maybe_error]
                     )
             return None
-        return super().can_overlap(other, ctx, mode)
+        return super(GenericValue, self).can_overlap(other, ctx, mode)
 
     def maybe_specify_error(
         self, i: int, other: Value, error: CanAssignError, ctx: CanAssignContext
@@ -1109,12 +1135,12 @@ class GenericValue(TypedValue):
                 for key in other.items:
                     can_assign = expected.can_assign(KnownValue(key), ctx)
                     if isinstance(can_assign, CanAssignError):
-                        return CanAssignError(f"In TypedDict key {key!r}", [can_assign])
+                        return CanAssignError(_LazyStr("In TypedDict key %r", key), [can_assign])
             elif i == 1:
                 for key, entry in other.items.items():
                     can_assign = expected.can_assign(entry.typ, ctx)
                     if isinstance(can_assign, CanAssignError):
-                        return CanAssignError(f"In TypedDict key {key!r}", [can_assign])
+                        return CanAssignError(_LazyStr("In TypedDict key %r", key), [can_assign])
         elif isinstance(other, SequenceValue) and self.typ in {
             list,
             set,
@@ -1128,9 +1154,9 @@ class GenericValue(TypedValue):
             for i, (_, key) in enumerate(other.members):
                 can_assign = expected.can_assign(key, ctx)
                 if isinstance(can_assign, CanAssignError):
-                    return CanAssignError(f"In element {i}", [can_assign])
+                    return CanAssignError(_LazyStr("In element %s", i), [can_assign])
 
-        return CanAssignError(f"In generic argument {i} to {self}", [error])
+        return CanAssignError(_LazyStr("In generic argument %s to %s", i, self), [error])
 
     def get_arg(self, index: int) -> Value:
         try:
@@ -1152,7 +1178,7 @@ class GenericValue(TypedValue):
         return GenericValue(self.typ, [arg.simplify() for arg in self.args])
 
 
-@dataclass(unsafe_hash=True, init=False)
+@dataclass(unsafe_hash=True, init=False, **_SLOTS)
 class SequenceValue(GenericValue):
     """A :class:`TypedValue` subclass representing a sequence of known type.
 
@@ -1177,7 +1203,7 @@ class SequenceValue(GenericValue):
             args = (unite_values(*[typ for _, typ in members]),)
         else:
             args = (AnyValue(AnySource.unreachable),)
-        super().__init__(typ, args)
+        super(SequenceValue, self).__init__(typ, args)
         self.members = tuple(members)
 
     def get_member_sequence(self) -> Optional[Sequence[Value]]:
@@ -1253,7 +1279,7 @@ class SequenceValue(GenericValue):
                     )
                 bounds_maps.append(can_assign)
             return unify_bounds_maps(bounds_maps)
-        return super().can_assign(other, ctx)
+        return super(SequenceValue, self).can_assign(other, ctx)
 
     def substitute_typevars(self, typevars: TypeVarMap) -> Value:
         return SequenceValue(
@@ -1290,7 +1316,7 @@ class SequenceValue(GenericValue):
         return GenericValue(self.typ, [arg])
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class KVPair:
     """Represents a single entry in a :class:`DictIncompleteValue`."""
 
@@ -1320,7 +1346,7 @@ class KVPair:
             return text
 
 
-@dataclass(unsafe_hash=True, init=False)
+@dataclass(unsafe_hash=True, init=False, **_SLOTS)
 class DictIncompleteValue(GenericValue):
     """A :class:`TypedValue` representing a dictionary of known size.
 
@@ -1338,7 +1364,7 @@ class DictIncompleteValue(GenericValue):
             value_type = unite_values(*[pair.value for pair in kv_pairs])
         else:
             key_type = value_type = AnyValue(AnySource.unreachable)
-        super().__init__(typ, (key_type, value_type))
+        super(DictIncompleteValue, self).__init__(typ, (key_type, value_type))
         self.kv_pairs = tuple(kv_pairs)
 
     def __str__(self) -> str:
@@ -1396,7 +1422,7 @@ class DictIncompleteValue(GenericValue):
         return unite_values(*possible_values)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class TypedDictEntry:
     typ: Value
     required: bool = True
@@ -1411,7 +1437,7 @@ class TypedDictEntry:
         return val
 
 
-@dataclass(init=False)
+@dataclass(init=False, **_SLOTS)
 class TypedDictValue(GenericValue):
     """Equivalent to ``typing.TypedDict``; a dictionary with a known set of string keys."""
 
@@ -1450,7 +1476,7 @@ class TypedDictValue(GenericValue):
         )
         # The key type must be str so dict[str, Any] is compatible with a TypedDict
         key_type = TypedValue(str)
-        super().__init__(dict, (key_type, value_type))
+        super(TypedDictValue, self).__init__(dict, (key_type, value_type))
         self.items = items
         self.extra_keys = extra_keys
         self.extra_keys_readonly = extra_keys_readonly
@@ -1468,7 +1494,7 @@ class TypedDictValue(GenericValue):
                 their_value = other.get_value(KnownValue(key), ctx)
                 if their_value is UNINITIALIZED_VALUE:
                     if entry.required:
-                        return CanAssignError(f"Key {key} is missing in {other}")
+                        return CanAssignError(_LazyStr("Key %s is missing in %s", key, other))
                     else:
                         continue
                 can_assign = entry.typ.can_assign(their_value, ctx)
@@ -1481,7 +1507,7 @@ class TypedDictValue(GenericValue):
                 for key_type in flatten_values(pair.key, unwrap_annotated=True):
                     if isinstance(key_type, KnownValue):
                         if not isinstance(key_type.val, str):
-                            return CanAssignError(f"Key {pair.key} is not a string")
+                            return CanAssignError(_LazyStr("Key %s is not a string", pair.key))
                         if key_type.val not in self.items:
                             if self.extra_keys is NO_RETURN_VALUE:
                                 return CanAssignError(
@@ -1576,7 +1602,7 @@ class TypedDictValue(GenericValue):
                             )
                         bounds_maps.append(can_assign)
             if not self.extra_keys_readonly and other.extra_keys_readonly:
-                return CanAssignError(f"Extra keys are readonly in {other}")
+                return CanAssignError(_LazyStr("Extra keys are readonly in %s", other))
             if self.extra_keys is not None:
                 their_extra_keys = other.extra_keys or TypedValue(object)
                 can_assign = self.extra_keys.can_assign(their_extra_keys, ctx)
@@ -1599,7 +1625,7 @@ class TypedDictValue(GenericValue):
             for key, entry in self.items.items():
                 if key not in other.val:
                     if entry.required:
-                        return CanAssignError(f"Key {key} is missing in {other}")
+                        return CanAssignError(_LazyStr("Key %s is missing in %s", key, other))
                 else:
                     can_assign = entry.typ.can_assign(KnownValue(other.val[key]), ctx)
                     if isinstance(can_assign, CanAssignError):
@@ -1623,7 +1649,7 @@ class TypedDictValue(GenericValue):
                             )
                         bounds_maps.append(can_assign)
             return unify_bounds_maps(bounds_maps)
-        return super().can_assign(other, ctx)
+        return super(TypedDictValue, self).can_assign(other, ctx)
 
     def can_overlap(
         self, other: Value, ctx: CanAssignContext, mode: OverlapMode
@@ -1634,7 +1660,7 @@ class TypedDictValue(GenericValue):
                 if key not in other.items:
                     if entry.required:
                         if other.extra_keys is None:
-                            return CanAssignError(f"Key {key} is missing in {other}")
+                            return CanAssignError(_LazyStr("Key %s is missing in %s", key, other))
                         else:
                             maybe_error = entry.typ.can_overlap(
                                 other.extra_keys, ctx, mode
@@ -1656,7 +1682,7 @@ class TypedDictValue(GenericValue):
             for key, entry in other.items.items():
                 if key not in self.items and entry.required:
                     if self.extra_keys is None:
-                        return CanAssignError(f"Key {key} is missing in {self}")
+                        return CanAssignError(_LazyStr("Key %s is missing in %s", key, self))
                     else:
                         maybe_error = entry.typ.can_overlap(self.extra_keys, ctx, mode)
                         if maybe_error is not None:
@@ -1665,7 +1691,7 @@ class TypedDictValue(GenericValue):
                                 f" type {self.extra_keys}",
                                 children=[maybe_error],
                             )
-        return super().can_overlap(other, ctx, mode)
+        return super(TypedDictValue, self).can_overlap(other, ctx, mode)
 
     def substitute_typevars(self, typevars: TypeVarMap) -> "TypedDictValue":
         return TypedDictValue(
@@ -1705,7 +1731,7 @@ class TypedDictValue(GenericValue):
             yield from entry.typ.walk_values()
 
 
-@dataclass(unsafe_hash=True, init=False)
+@dataclass(unsafe_hash=True, init=False, **_SLOTS)
 class AsyncTaskIncompleteValue(GenericValue):
     """A :class:`GenericValue` representing an async task.
 
@@ -1717,7 +1743,7 @@ class AsyncTaskIncompleteValue(GenericValue):
     """The value returned by the task on completion."""
 
     def __init__(self, typ: Union[type, str], value: Value) -> None:
-        super().__init__(typ, (value,))
+        super(AsyncTaskIncompleteValue, self).__init__(typ, (value,))
         self.value = value
 
     def substitute_typevars(self, typevars: TypeVarMap) -> Value:
@@ -1730,7 +1756,7 @@ class AsyncTaskIncompleteValue(GenericValue):
         yield from self.value.walk_values()
 
 
-@dataclass(unsafe_hash=True, init=False)
+@dataclass(unsafe_hash=True, init=False, **_SLOTS)
 class CallableValue(TypedValue):
     """Equivalent to the ``Callable`` type.
 
@@ -1745,7 +1771,7 @@ class CallableValue(TypedValue):
         signature: "pyanalyze.signature.ConcreteSignature",
         fallback: Union[type, str] = collections.abc.Callable,
     ) -> None:
-        super().__init__(fallback)
+        super(CallableValue, self).__init__(fallback)
         self.signature = signature
 
     def substitute_typevars(self, typevars: TypeVarMap) -> Value:
@@ -1768,7 +1794,7 @@ class CallableValue(TypedValue):
         if not isinstance(other, (MultiValuedValue, AnyValue, AnnotatedValue)):
             signature = ctx.signature_from_value(other)
             if signature is None:
-                return CanAssignError(f"{other} is not a callable type")
+                return CanAssignError(_LazyStr("%s is not a callable type", other))
             if isinstance(signature, pyanalyze.signature.BoundMethodSignature):
                 signature = signature.get_signature(ctx=ctx)
             if isinstance(
@@ -1780,7 +1806,7 @@ class CallableValue(TypedValue):
             ):
                 return self.signature.can_assign(signature, ctx)
 
-        return super().can_assign(other, ctx)
+        return super(CallableValue, self).can_assign(other, ctx)
 
     def can_overlap(
         self, other: Value, ctx: CanAssignContext, mode: OverlapMode
@@ -1788,7 +1814,7 @@ class CallableValue(TypedValue):
         if not isinstance(other, (MultiValuedValue, AnyValue, AnnotatedValue)):
             signature = ctx.signature_from_value(other)
             return _signatures_overlap(self.signature, signature, ctx)
-        return super().can_overlap(other, ctx, mode)
+        return super(CallableValue, self).can_overlap(other, ctx, mode)
 
     def __str__(self) -> str:
         return str(self.signature)
@@ -1821,7 +1847,7 @@ def _signatures_overlap(
     return None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class SubclassValue(Value):
     """Equivalent of ``Type[]``.
 
@@ -1886,7 +1912,7 @@ class SubclassValue(Value):
                 or isinstance(self.typ, TypeVarValue)
             ):
                 return {}
-        return super().can_assign(other, ctx)
+        return super(SubclassValue, self).can_assign(other, ctx)
 
     def can_overlap(
         self, other: Value, ctx: CanAssignContext, mode: OverlapMode
@@ -1907,7 +1933,7 @@ class SubclassValue(Value):
                 f"Types {self} and {other} cannot overlap",
                 children=[left_errors, right_errors],
             )
-        return super().can_overlap(other, ctx, mode)
+        return super(SubclassValue, self).can_overlap(other, ctx, mode)
 
     def get_type(self) -> Optional[type]:
         if isinstance(self.typ, TypedValue):
@@ -1940,7 +1966,7 @@ class SubclassValue(Value):
             return AnyValue(AnySource.inference)
 
 
-@dataclass(frozen=True, order=False)
+@dataclass(frozen=True, order=False, **_SLOTS)
 class MultiValuedValue(Value):
     """Equivalent of ``typing.Union``. Represents the union of multiple values."""
 
@@ -2003,7 +2029,7 @@ class MultiValuedValue(Value):
                     return can_assign
                 bounds_maps.append(can_assign)
             if not bounds_maps:
-                return CanAssignError(f"Cannot assign {other} to {self}")
+                return CanAssignError(_LazyStr("Cannot assign %s to %s", other, self))
             return unify_bounds_maps(bounds_maps)
         elif isinstance(other, AnyValue) and not ctx.should_exclude_any():
             ctx.record_any_used()
@@ -2108,7 +2134,7 @@ NO_RETURN_VALUE = MultiValuedValue([])
 """The empty union, equivalent to ``typing.Never``."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class ReferencingValue(Value):
     """Value that is a reference to another value (used to implement globals)."""
 
@@ -2123,12 +2149,12 @@ class ReferencingValue(Value):
 SelfT = TypeVar("SelfT")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class Bound:
     pass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class LowerBound(Bound):
     """LowerBound(T, V) means V must be assignable to the value of T."""
 
@@ -2139,7 +2165,7 @@ class LowerBound(Bound):
         return f"{self.value} <= {self.typevar}"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class UpperBound(Bound):
     """UpperBound(T, V) means the value of T must be assignable to V."""
 
@@ -2150,20 +2176,20 @@ class UpperBound(Bound):
         return f"{self.value} >= {self.typevar}"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class OrBound(Bound):
     """At least one of the specified bounds must be true."""
 
     bounds: Sequence[Sequence[Bound]]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class IsOneOf(Bound):
     typevar: TypeVarLike
     constraints: Sequence[Value]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class TypeVarValue(Value):
     """Value representing a ``typing.TypeVar`` or ``typing.ParamSpec``.
 
@@ -2216,7 +2242,7 @@ class TypeVarValue(Value):
         bounds_map = {self.typevar: bounds}
         _, errors = pyanalyze.typevar.resolve_bounds_map(bounds_map, ctx)
         if errors:
-            return CanAssignError(f"Value of {self} cannot be {other}", list(errors))
+            return CanAssignError(_LazyStr("Value of %s cannot be %s", self, other), list(errors))
         return bounds_map
 
     def get_fallback_value(self) -> Value:
@@ -2245,7 +2271,7 @@ def set_self(value: Value, self_value: Value) -> Value:
     return value.substitute_typevars({SelfT: self_value})
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class ParamSpecArgsValue(Value):
     param_spec: ParamSpec
 
@@ -2253,7 +2279,7 @@ class ParamSpecArgsValue(Value):
         return f"{self.param_spec}.args"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class ParamSpecKwargsValue(Value):
     param_spec: ParamSpec
 
@@ -2280,7 +2306,7 @@ class Extension:
         return {}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class CustomCheckExtension(Extension):
     custom_check: CustomCheck
 
@@ -2301,7 +2327,7 @@ class CustomCheckExtension(Extension):
         return self.custom_check.can_be_assigned(value, ctx)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class ParameterTypeGuardExtension(Extension):
     """An :class:`Extension` used in a function return type. Used to
     indicate that the parameter named `varname` is of type `guarded_type`.
@@ -2321,7 +2347,7 @@ class ParameterTypeGuardExtension(Extension):
         yield from self.guarded_type.walk_values()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class NoReturnGuardExtension(Extension):
     """An :class:`Extension` used in a function return type. Used to
     indicate that unless the parameter named `varname` is of type `guarded_type`,
@@ -2342,7 +2368,7 @@ class NoReturnGuardExtension(Extension):
         yield from self.guarded_type.walk_values()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class TypeGuardExtension(Extension):
     """An :class:`Extension` used in a function return type. Used to
     indicate that the first function argument is of type `guarded_type`.
@@ -2377,11 +2403,11 @@ class TypeGuardExtension(Extension):
                         )
                     can_assign_maps.append(left_can_assign)
         if not can_assign_maps:
-            return CanAssignError(f"{value} is not a TypeGuard")
+            return CanAssignError(_LazyStr("%s is not a TypeGuard", value))
         return unify_bounds_maps(can_assign_maps)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class TypeIsExtension(Extension):
     """An :class:`Extension` used in a function return type. Used to
     indicate that the first function argument may be narrowed to type `guarded_type`.
@@ -2423,11 +2449,11 @@ class TypeIsExtension(Extension):
                         )
                     can_assign_maps += [left_can_assign, right_can_assign]
         if not can_assign_maps:
-            return CanAssignError(f"{value} is not a TypeIs")
+            return CanAssignError(_LazyStr("%s is not a TypeIs", value))
         return unify_bounds_maps(can_assign_maps)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class HasAttrGuardExtension(Extension):
     """An :class:`Extension` used in a function return type. Used to
     indicate that the function argument named `varname` has an attribute
@@ -2453,7 +2479,7 @@ class HasAttrGuardExtension(Extension):
         yield from self.attribute_type.walk_values()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class HasAttrExtension(Extension):
     """Attached to an object to indicate that it has the given attribute.
 
@@ -2484,7 +2510,7 @@ class HasAttrExtension(Extension):
         yield from self.attribute_type.walk_values()
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False, **_SLOTS)
 class ConstraintExtension(Extension):
     """Encapsulates a Constraint. If the value is evaluated and is truthy, the
     constraint must be True."""
@@ -2499,7 +2525,7 @@ class ConstraintExtension(Extension):
         return str(self.constraint)
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False, **_SLOTS)
 class NoReturnConstraintExtension(Extension):
     """Encapsulates a Constraint. If the value is evaluated and completes, the
     constraint must be True."""
@@ -2511,7 +2537,7 @@ class NoReturnConstraintExtension(Extension):
         return id(self)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class AlwaysPresentExtension(Extension):
     """Extension that indicates that an iterable value is nonempty.
 
@@ -2520,24 +2546,24 @@ class AlwaysPresentExtension(Extension):
     """
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class AssertErrorExtension(Extension):
     """Used for the implementation of :func:`pyanalyze.extensions.assert_error`."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class SkipDeprecatedExtension(Extension):
     """Indicates that use of this value should not trigger deprecation errors."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class DeprecatedExtension(Extension):
     """Indicates that use of this value should trigger a deprecation error."""
 
     deprecation_message: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class SysPlatformExtension(Extension):
     """Used for sys.platform."""
 
@@ -2545,7 +2571,7 @@ class SysPlatformExtension(Extension):
 SYS_PLATFORM_EXTENSION = SysPlatformExtension()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class SysVersionInfoExtension(Extension):
     """Used for sys.version_info."""
 
@@ -2553,7 +2579,7 @@ class SysVersionInfoExtension(Extension):
 SYS_VERSION_INFO_EXTENSION = SysVersionInfoExtension()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class DefiniteValueExtension(Extension):
     """Used if a comparison has a definite value that should be used
     to skip type checking."""
@@ -2561,7 +2587,7 @@ class DefiniteValueExtension(Extension):
     value: bool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class AnnotatedValue(Value):
     """Value representing a `PEP 593 <https://www.python.org/dev/peps/pep-0593/>`_ Annotated object.
 
@@ -2652,7 +2678,7 @@ class AnnotatedValue(Value):
         return AnnotatedValue(self.value.simplify(), self.metadata)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class UnpackedValue(Value):
     """Represents the result of PEP 646's Unpack operator."""
 
@@ -2668,7 +2694,7 @@ class UnpackedValue(Value):
         return None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class VariableNameValue(AnyValue):
     """Value that is stored in a variable associated with a particular kind of value.
 
@@ -2686,7 +2712,7 @@ class VariableNameValue(AnyValue):
     """
 
     def __init__(self, varnames: Iterable[str]) -> None:
-        super().__init__(AnySource.variable_name)
+        super(VariableNameValue, self).__init__(AnySource.variable_name)
         object.__setattr__(self, "varnames", tuple(varnames))
 
     varnames: tuple[str, ...]
@@ -2696,7 +2722,7 @@ class VariableNameValue(AnyValue):
             return {}
         if other == self:
             return {}
-        return CanAssignError(f"Types {self} and {other} are different")
+        return CanAssignError(_LazyStr("Types %s and %s are different", self, other))
 
     def can_overlap(
         self, other: Value, ctx: CanAssignContext, mode: OverlapMode
@@ -2727,7 +2753,7 @@ class VariableNameValue(AnyValue):
         return None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, **_SLOTS)
 class CallValue(Value):
     """Represents the arguments to a call."""
 
@@ -2879,6 +2905,16 @@ def unite_values(*values: Value) -> Value:
     """
     if not values:
         return NO_RETURN_VALUE
+    # Fast path: single non-union value (very common)
+    if len(values) == 1:
+        val = values[0]
+        val_type = type(val)
+        if val_type is not MultiValuedValue and (
+            val_type is not AnnotatedValue
+            or type(val.value) is not MultiValuedValue
+        ):
+            if not _is_unreachable(val):
+                return val
     # Make sure order is consistent; conceptually this is a set but
     # sets have unpredictable iteration order.
     hashable_vals = {}
@@ -3153,7 +3189,7 @@ def unpack_values(
         good_subvals = []
         for subval in subvals:
             if isinstance(subval, CanAssignError):
-                return CanAssignError(f"Cannot unpack {value}", [subval])
+                return CanAssignError(_LazyStr("Cannot unpack %s", value), [subval])
             good_subvals.append(subval)
         if not good_subvals:
             return _create_unpacked_list(
@@ -3248,7 +3284,7 @@ def _unpack_sequence_value(
         if remaining_target_length == 0:
             if all(is_many for is_many, _ in value.members[target_length:]):
                 return head
-            return CanAssignError(f"{value} must have exactly {target_length} elements")
+            return CanAssignError(_LazyStr("%s must have exactly %s elements", value, target_length))
 
         tail = []
         while len(tail) < remaining_target_length:
@@ -3266,7 +3302,7 @@ def _unpack_sequence_value(
         else:
             remaining_members = value.members[len(head) :]
         if not remaining_members:
-            return CanAssignError(f"{value} must have exactly {target_length} elements")
+            return CanAssignError(_LazyStr("%s must have exactly %s elements", value, target_length))
         middle_length = remaining_target_length - len(tail)
         fallback_value = unite_values(*[val for _, val in remaining_members])
         return [*head, *[fallback_value for _ in range(middle_length)], *reversed(tail)]

@@ -24,7 +24,7 @@ import builtins
 import contextlib
 import enum
 from ast import AST
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field, replace
@@ -89,7 +89,7 @@ CompositeIndex = Union[str, KnownValue]
 EMPTY_ORIGIN = frozenset((None,))
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CompositeVariable:
     """:term:`varname` used to implement constraints on instance variables.
 
@@ -120,7 +120,7 @@ class CompositeVariable:
 Varname = Union[str, CompositeVariable]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class VarnameWithOrigin:
     varname: str
     origin: VarnameOrigin = EMPTY_ORIGIN
@@ -201,7 +201,7 @@ class Composite(NamedTuple):
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _LookupContext:
     varname: Varname
     fallback_value: Optional[Value]
@@ -250,6 +250,8 @@ class AbstractConstraint:
 
     """
 
+    __slots__ = ()
+
     def apply(self) -> Iterable["Constraint"]:
         """Yields concrete constraints that are active when this constraint is applied."""
         raise NotImplementedError
@@ -263,7 +265,7 @@ class AbstractConstraint:
         return object.__hash__(self)
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False, slots=True)
 class Constraint(AbstractConstraint):
     """A constraint is a restriction on the value of a variable.
 
@@ -457,7 +459,7 @@ FALSY_CONSTRAINT = Constraint(
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class NullConstraint(AbstractConstraint):
     """Represents the absence of a constraint."""
 
@@ -472,7 +474,7 @@ NULL_CONSTRAINT = NullConstraint()
 """The single instance of :class:`NullConstraint`."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PredicateProvider(AbstractConstraint):
     """A form of constraint implemented through a predicate on a value.
 
@@ -512,7 +514,7 @@ class PredicateProvider(AbstractConstraint):
         return NULL_CONSTRAINT
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class EquivalentConstraint(AbstractConstraint):
     """Represents multiple constraints that are either all true or all false."""
 
@@ -548,7 +550,7 @@ class EquivalentConstraint(AbstractConstraint):
         return f"({children})"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AndConstraint(AbstractConstraint):
     """Represents the AND of two constraints."""
 
@@ -592,7 +594,7 @@ class AndConstraint(AbstractConstraint):
         return f"({children})"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class OrConstraint(AbstractConstraint):
     """Represents the OR of two constraints."""
 
@@ -670,7 +672,7 @@ class OrConstraint(AbstractConstraint):
         return f"({children})"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _ConstrainedValue(Value):
     """Helper class, only used within a FunctionScope."""
 
@@ -684,7 +686,8 @@ class _ConstrainedValue(Value):
 _empty_constrained = _ConstrainedValue(frozenset(), [])
 
 
-@dataclass
+
+@dataclass(slots=True)
 class Scope:
     """Represents a single level in the scope stack.
 
@@ -1323,7 +1326,7 @@ class FunctionScope(Scope):
         constraints: Iterable[Constraint] = (),
     ) -> Value:
         # Deduplicate nodes to gain some performance.
-        nodes = OrderedDict.fromkeys(nodes)
+        nodes = dict.fromkeys(nodes)
         # If the variable is a nonlocal or composite, "uninitialized" doesn't make sense;
         # instead use an empty constraint to point to the parent scope.
         should_use_unconstrained = (
@@ -1567,7 +1570,7 @@ def constrain_value(
 
 def uniq_chain(iterables: Iterable[Iterable[T]]) -> list[T]:
     """Returns a flattened list, collapsing equal elements but preserving order."""
-    return list(OrderedDict.fromkeys(chain.from_iterable(iterables)))
+    return list(dict.fromkeys(chain.from_iterable(iterables)))
 
 
 def _constrain_value(
