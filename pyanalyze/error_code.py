@@ -18,6 +18,13 @@ class Error:
     name: str
     description: str
 
+    def __getstate__(self) -> tuple[str, str]:
+        return (self.name, self.description)
+
+    def __setstate__(self, state: tuple[str, str]) -> None:
+        object.__setattr__(self, "name", state[0])
+        object.__setattr__(self, "description", state[1])
+
 
 class ErrorRegistry:
     errors: dict[str, Error]

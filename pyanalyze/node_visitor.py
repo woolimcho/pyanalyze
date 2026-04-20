@@ -8,7 +8,6 @@ import argparse
 import ast
 import builtins
 import collections
-import concurrent.futures
 import cProfile
 import json
 import logging
@@ -760,15 +759,14 @@ class BaseNodeVisitor(ast.NodeVisitor):
     @classmethod
     def _run_on_files(cls, files: Iterable[str], **kwargs: Any) -> list[Failure]:
         all_failures = []
-        args = [(filename, kwargs) for filename in sorted(files)]
-        if kwargs.pop("parallel", False):
-            extra_data = []
-            with concurrent.futures.ProcessPoolExecutor(os.cpu_count()) as executor:
-                for failures, extra in executor.map(cls._check_file_single_arg, args):
-                    all_failures += failures
-                    extra_data.append(extra)
+        max_workers = kwargs.pop("parallel", False)
+        if max_workers:
+            all_failures, extra_data = _fork_parallel(
+                cls, sorted(files), kwargs, max_workers
+            )
             cls.merge_extra_data(extra_data, **kwargs)
         else:
+            args = [(filename, kwargs) for filename in sorted(files)]
             for failures, _ in map(cls._check_file_single_arg, args):
                 all_failures += failures
         all_failures += cls.perform_final_checks(kwargs)
@@ -804,9 +802,20 @@ class BaseNodeVisitor(ast.NodeVisitor):
         return failures, None
 
     @classmethod
-    def merge_extra_data(cls, extra_data: object, **kwargs: Any) -> None:
-        """Override this to aggregate data passed from parallel workers."""
-        pass
+    def merge_extra_data(cls, extra_data: list[dict[str, object]], **kwargs: Any) -> None:
+        """Aggregate cross-file data from parallel workers."""
+
+    @classmethod
+    def _merge_worker_extra_data(
+        cls, extra_data: list[dict[str, object]]
+    ) -> dict[str, object]:
+        """Merge per-file extra data within a single worker into one dict.
+
+        Override in subclasses to combine per-file cross-module data
+        (e.g., attribute reads/sets) into a single serializable dict
+        that can be written to the worker's result file.
+        """
+        return {}
 
     @classmethod
     def _get_argument_parser(cls) -> argparse.ArgumentParser:
@@ -1022,6 +1031,375 @@ class BaseNodeVisitor(ast.NodeVisitor):
     def _should_ignore_module(cls, module_name: str) -> bool:
         """Override this to ignore some modules."""
         return False
+
+
+
+def _fork_parallel(
+    cls: type,
+    sorted_files: list[str],
+    kwargs: dict[str, Any],
+    max_workers: int,
+) -> tuple[list[Failure], list[dict[str, object]]]:
+    """Run file checks in parallel using raw os.fork() with two phases.
+
+    Phase 1: Workers analyze files, write failures and small cross-file
+    data (attributes_set, reexport info) to temp files via pickle.
+    attributes_read stays in worker memory.  Workers block on a pipe.
+
+    Phase 2: Parent merges attributes_set from all workers, writes merged
+    data to a temp file.  Workers read it, run check_attribute_reads()
+    locally, write attribute failures, and exit.
+
+    Uses os.fork() directly (no multiprocessing.Pool) to avoid deadlocks
+    from Pool's internal threads.
+    """
+    import gc
+    import pickle
+    import signal
+    import tempfile
+
+    if max_workers is True:
+        max_workers = min(8, os.cpu_count() or 8)
+
+    if not sorted_files:
+        return [], []
+
+    n_workers = min(max_workers, len(sorted_files))
+    chunks: list[list[str]] = [[] for _ in range(n_workers)]
+    for i, f in enumerate(sorted_files):
+        chunks[i % n_workers].append(f)
+
+    tmpdir = tempfile.mkdtemp(prefix="pyanalyze_parallel_")
+    merged_path = os.path.join(tmpdir, "merged.pkl")
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    gc.freeze()
+
+    # Per-worker: (pid, phase1_path, phase2_path, done_r, go_w)
+    workers: list[tuple[int, str, str, int, int]] = []
+
+    for i, chunk in enumerate(chunks):
+        phase1_path = os.path.join(tmpdir, f"{i}_p1.pkl")
+        phase2_path = os.path.join(tmpdir, f"{i}_p2.pkl")
+        done_r, done_w = os.pipe()
+        go_r, go_w = os.pipe()
+
+        pid = os.fork()
+        if pid == 0:
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            os.close(done_r)
+            os.close(go_w)
+            for _, _, _, dr, gw in workers:
+                os.close(dr)
+                os.close(gw)
+            try:
+                _worker_run(
+                    cls, chunk, kwargs, phase1_path, phase2_path,
+                    merged_path, done_w, go_r,
+                )
+            except Exception:
+                pass
+            os._exit(0)
+        os.close(done_w)
+        os.close(go_r)
+        workers.append((pid, phase1_path, phase2_path, done_r, go_w))
+
+    def _kill_all() -> None:
+        for pid, _, _, dr, gw in workers:
+            for fd in (dr, gw):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        for pid, _, _, _, _ in workers:
+            try:
+                os.waitpid(pid, 0)
+            except ChildProcessError:
+                pass
+
+    try:
+        # Wait for all workers to finish Phase 1
+        for _, _, _, done_r, _ in workers:
+            try:
+                os.read(done_r, 1)  # b"" (EOF) if worker crashed
+                os.close(done_r)
+            except OSError:
+                pass
+
+        # Unfreeze GC in parent so temporary objects from pickle loads
+        # can be collected.  (gc.freeze was called before forking.)
+        gc.unfreeze()
+
+        # Merge cross-file data from all workers.  Only reads the first
+        # pickle object (extra) from each file — failures are the second
+        # object and are NOT loaded here.
+        all_extra: list[dict[str, object]] = []
+        merged_attrs_set: dict[object, set[str]] = {}
+        merged_modules: set[str] = set()
+        merged_examined: set[object] = set()
+        merged_dynamic: set[object] = set()
+        for _, phase1_path, _, _, _ in workers:
+            try:
+                with open(phase1_path, "rb") as f:
+                    extra = pickle.load(f)  # reads only extra, not failures
+                if extra:
+                    all_extra.append(extra)
+                    for key, names in extra.get("attributes_set", {}).items():
+                        merged_attrs_set.setdefault(key, set()).update(names)
+                    merged_modules.update(extra.get("modules_examined", set()))
+                    merged_examined.update(extra.get("classes_examined", set()))
+                    merged_dynamic.update(extra.get("types_with_dynamic_attrs", set()))
+            except (OSError, pickle.UnpicklingError, EOFError):
+                pass
+
+        with open(merged_path, "wb") as f:
+            pickle.dump({
+                "attributes_set": merged_attrs_set,
+                "modules_examined": merged_modules,
+                "classes_examined": merged_examined,
+                "types_with_dynamic_attrs": merged_dynamic,
+            }, f, pickle.HIGHEST_PROTOCOL)
+
+        # Signal workers to proceed to Phase 2.
+        # BrokenPipeError means the worker already exited (crash/signal).
+        for _, _, _, _, go_w in workers:
+            try:
+                os.write(go_w, b"1")
+            except BrokenPipeError:
+                pass
+            try:
+                os.close(go_w)
+            except OSError:
+                pass
+
+        for pid, _, _, _, _ in workers:
+            try:
+                os.waitpid(pid, 0)
+            except ChildProcessError:
+                pass
+
+    except (KeyboardInterrupt, SystemExit):
+        _kill_all()
+        raise
+
+    all_failures: list[Failure] = []
+    attribute_checker = kwargs.get("attribute_checker")
+    unused_finder = kwargs.get("unused_finder")
+    for _, phase1_path, phase2_path, _, _ in workers:
+        # Phase 1 file: first object is extra (skip), second is failures
+        try:
+            with open(phase1_path, "rb") as f:
+                pickle.load(f)  # skip extra
+                all_failures.extend(pickle.load(f))
+        except (OSError, pickle.UnpicklingError, EOFError):
+            pass
+        # Phase 2 file: failures + unexamined_base_classes + unused_finder
+        try:
+            with open(phase2_path, "rb") as f:
+                data = pickle.load(f)
+            all_failures.extend(data.get("failures", []))
+            # Merge unexamined_base_classes back into parent's attribute_checker
+            if attribute_checker is not None:
+                for mod_name, qualname in data.get("unexamined_base_classes", []):
+                    mod = sys.modules.get(mod_name)
+                    if mod is not None:
+                        cls_obj = getattr(mod, qualname, None)
+                        if cls_obj is not None:
+                            attribute_checker.unexamined_base_classes.add(cls_obj)
+            # Merge unused_finder data
+            uf_data = data.get("unused_finder")
+            if uf_data is not None and unused_finder is not None:
+                _merge_unused_finder(unused_finder, uf_data)
+        except (OSError, pickle.UnpicklingError, EOFError):
+            pass
+        for path in (phase1_path, phase2_path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    for path in (merged_path, tmpdir):
+        try:
+            os.unlink(path) if os.path.isfile(path) else os.rmdir(path)
+        except OSError:
+            pass
+
+    return all_failures, all_extra
+
+
+class _UnusedFinderLike(Protocol):
+    """Protocol for UnusedObjectFinder to avoid circular imports."""
+
+    usages: dict[ModuleType, dict[str, set[str]]]
+    import_stars: dict[ModuleType, set[ModuleType]]
+    module_to_import_stars: dict[ModuleType, set[ModuleType]]
+    visited_modules: list[ModuleType]
+    enabled: bool
+
+
+class _SerializedUnusedFinder(TypedDict):
+    usages: dict[str, dict[str, list[str]]]
+    import_stars: dict[str, list[str]]
+    visited_modules: list[str]
+
+
+def _serialize_unused_finder(
+    finder: _UnusedFinderLike,
+) -> _SerializedUnusedFinder:
+    """Serialize UnusedObjectFinder state using module names instead of objects."""
+    usages: dict[str, dict[str, list[str]]] = {}
+    for mod, attrs in finder.usages.items():
+        usages[mod.__name__] = {attr: list(users) for attr, users in attrs.items()}
+    import_stars: dict[str, list[str]] = {}
+    for mod, importers in finder.import_stars.items():
+        import_stars[mod.__name__] = [m.__name__ for m in importers]
+    visited: list[str] = [m.__name__ for m in finder.visited_modules]
+    return {
+        "usages": usages,
+        "import_stars": import_stars,
+        "visited_modules": visited,
+    }
+
+
+def _merge_unused_finder(
+    finder: _UnusedFinderLike,
+    worker_data: _SerializedUnusedFinder,
+) -> None:
+    """Merge serialized UnusedObjectFinder data back into the parent's finder."""
+    usages = worker_data["usages"]
+    import_stars_data = worker_data["import_stars"]
+    visited = worker_data["visited_modules"]
+    for mod_name, attrs in usages.items():
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        for attr, users in attrs.items():
+            finder.usages[mod][attr].update(users)
+    for mod_name, importer_names in import_stars_data.items():
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        for imp_name in importer_names:
+            imp = sys.modules.get(imp_name)
+            if imp is not None:
+                finder.import_stars[mod].add(imp)
+                finder.module_to_import_stars[imp].add(mod)
+    for mod_name in visited:
+        mod = sys.modules.get(mod_name)
+        if mod is not None:
+            finder.visited_modules.append(mod)
+
+
+def _worker_run(
+    cls: type,
+    chunk: list[str],
+    kwargs: dict[str, Any],
+    phase1_path: str,
+    phase2_path: str,
+    merged_path: str,
+    done_w: int,
+    go_r: int,
+) -> None:
+    """Worker: Phase 1 (analyze files) → wait → Phase 2 (attribute checks)."""
+    import pickle
+
+    # Phase 1: analyze files
+    child_failures: list[Failure] = []
+    main_module = sys.modules["__main__"]
+    for filename in chunk:
+        try:
+            failures, _ = cls.check_file_in_worker(filename, **kwargs)
+            child_failures.extend(failures)
+        except Exception:
+            pass
+        finally:
+            sys.modules["__main__"] = main_module
+
+    # Write results and signal done.  This MUST happen even if
+    # _snapshot_worker_state or pickle.dump fails — otherwise the
+    # parent hangs waiting on the done pipe.
+    try:
+        extra = cls._snapshot_worker_state(kwargs)
+        with open(phase1_path, "wb") as f:
+            pickle.dump(extra, f, pickle.HIGHEST_PROTOCOL)
+            pickle.dump(child_failures, f, pickle.HIGHEST_PROTOCOL)
+    except Exception:
+        # Snapshot or pickle failed.  Write just failures so the parent
+        # still gets type-check errors.
+        try:
+            with open(phase1_path, "wb") as f:
+                pickle.dump({}, f, pickle.HIGHEST_PROTOCOL)
+                pickle.dump(child_failures, f, pickle.HIGHEST_PROTOCOL)
+        except Exception:
+            pass
+    finally:
+        try:
+            os.write(done_w, b"1")
+        except OSError:
+            pass
+        try:
+            os.close(done_w)
+        except OSError:
+            pass
+
+    # Wait for parent to merge and signal Phase 2
+    try:
+        os.read(go_r, 1)
+    except OSError:
+        return
+    finally:
+        try:
+            os.close(go_r)
+        except OSError:
+            pass
+
+    # Phase 2: run check_attribute_reads with merged attributes_set
+    attribute_checker = kwargs.get("attribute_checker")
+    if attribute_checker is None or not attribute_checker.enabled:
+        return
+
+    try:
+        with open(merged_path, "rb") as f:
+            merged = pickle.load(f)
+    except (OSError, pickle.UnpicklingError, EOFError):
+        return
+
+    for key, names in merged.get("attributes_set", {}).items():
+        attribute_checker.attributes_set[key] |= names
+    attribute_checker.modules_examined |= merged.get("modules_examined", set())
+    attribute_checker.classes_examined |= merged.get("classes_examined", set())
+    attribute_checker.types_with_dynamic_attrs |= merged.get(
+        "types_with_dynamic_attrs", set()
+    )
+
+    attribute_checker.check_attribute_reads()
+
+    # Serialize Phase 2 results: attribute failures + unexamined_base_classes
+    # + unused_finder data.
+    phase2_data: dict[str, object] = {}
+    if attribute_checker.all_failures:
+        phase2_data["failures"] = attribute_checker.all_failures
+    # unexamined_base_classes: serialize as (module, qualname) for types
+    if attribute_checker.unexamined_base_classes:
+        phase2_data["unexamined_base_classes"] = [
+            (getattr(cls, "__module__", ""), getattr(cls, "__qualname__", ""))
+            for cls in attribute_checker.unexamined_base_classes
+        ]
+    # unused_finder: serialize module refs as __name__ strings
+    unused_finder = kwargs.get("unused_finder")
+    if unused_finder is not None and unused_finder.enabled:
+        phase2_data["unused_finder"] = _serialize_unused_finder(unused_finder)
+    if phase2_data:
+        try:
+            with open(phase2_path, "wb") as f:
+                pickle.dump(phase2_data, f, pickle.HIGHEST_PROTOCOL)
+        except Exception:
+            pass
 
 
 class NodeTransformer(ast.NodeVisitor):

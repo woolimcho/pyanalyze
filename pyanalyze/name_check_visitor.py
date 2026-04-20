@@ -33,7 +33,16 @@ from dataclasses import dataclass
 from itertools import chain
 from pathlib import Path
 from types import GenericAlias
-from typing import Annotated, Any, Callable, ClassVar, Optional, TypeVar, Union
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    ClassVar,
+    Optional,
+    TypedDict,
+    TypeVar,
+    Union,
+)
 from unittest.mock import ANY
 
 import asynq
@@ -1050,6 +1059,94 @@ class CallSiteCollector:
             # Unhashable callee. This is mostly calls to bound versions of list.append. We could get
             # the unbound method, but that doesn't seem very useful, so we just ignore it.
             pass
+
+
+# (attr, lineno, end_lineno, col_offset, end_col_offset, filename)
+_ReexportPending = tuple[str, int, int, int, int, str]
+
+
+class _WorkerAttrData(TypedDict):
+    """Small cross-file data from a parallel worker (pickle-serialized).
+
+    attributes_read is intentionally excluded — it's huge and stays in
+    worker memory.  Workers keep attributes_read locally and run
+    check_attribute_reads() in Phase 2 after receiving the merged
+    attributes_set from the parent.
+    """
+
+    attributes_set: dict[object, set[str]]
+    modules_examined: set[str]
+    classes_examined: set[object]
+    types_with_dynamic_attrs: set[object]
+    reexport_completed: set[str]
+    reexport_exports: dict[str, set[str]]
+    reexport_pending: dict[str, list[_ReexportPending]]
+
+
+def _serialize_reexport_data(
+    checker: Optional["Checker"],
+) -> tuple[set[str], dict[str, set[str]], dict[str, list[_ReexportPending]]]:
+    """Extract reexport data from a Checker's reexport_tracker."""
+    if checker is None:
+        return set(), {}, {}
+    tracker = checker.reexport_tracker
+    completed = set(tracker.completed_modules)
+    exports: dict[str, set[str]] = {
+        mod: set(attrs) for mod, attrs in tracker.module_to_reexports.items()
+    }
+    # Pending accesses: only those for modules NOT completed in this worker.
+    # Accesses to completed modules were already checked within the worker.
+    pending: dict[str, list[_ReexportPending]] = {}
+    for mod, accesses in tracker.used_reexports.items():
+        if mod not in tracker.completed_modules:
+            entries: list[_ReexportPending] = []
+            for attr, node, _ctx in accesses:
+                if isinstance(node, ast.expr):
+                    ln = node.lineno
+                    eln = node.end_lineno if node.end_lineno is not None else ln
+                    co = node.col_offset
+                    eco = node.end_col_offset if node.end_col_offset is not None else co
+                else:
+                    ln = eln = co = eco = 0
+                entries.append((attr, ln, eln, co, eco, _ctx.filename))
+            if entries:
+                pending[mod] = entries
+    return completed, exports, pending
+
+
+def _resolve_reexport_pending(
+    extra_data: list[_WorkerAttrData], options: Options
+) -> list[node_visitor.Failure]:
+    """Check cross-worker pending reexport accesses against merged exports.
+
+    Returns failures and appends them to the appropriate _Phase2Visitor.
+    """
+    # Build merged export map from all workers
+    all_exports: dict[str, set[str]] = {}
+    for data in extra_data:
+        for mod, attrs in data["reexport_exports"].items():
+            all_exports.setdefault(mod, set()).update(attrs)
+
+    failures: list[node_visitor.Failure] = []
+    visitors: dict[str, _Phase2Visitor] = {}
+    for data in extra_data:
+        for mod, entries in data["reexport_pending"].items():
+            exports = all_exports.get(mod, set())
+            for attr, lineno, _end_lineno, col, _end_col, filename in entries:
+                if attr in exports:
+                    continue
+                if filename not in visitors:
+                    visitors[filename] = _Phase2Visitor(filename, options)
+                visitor = visitors[filename]
+                node = node_visitor._FakeNode(lineno, col)
+                failure = visitor.show_error(
+                    node,
+                    f"Attribute '{attr}' is not exported by module '{mod}'",
+                    ErrorCode.implicit_reexport,
+                )
+                if failure is not None:
+                    failures.append(failure)
+    return failures
 
 
 class NameCheckVisitor(node_visitor.ReplacingNodeVisitor):
@@ -5923,44 +6020,108 @@ class NameCheckVisitor(node_visitor.ReplacingNodeVisitor):
         cls,
         filename: str,
         attribute_checker: Optional[ClassAttributeChecker] = None,
+        checker: Optional[Checker] = None,
         **kwargs: Any,
-    ) -> tuple[list[node_visitor.Failure], Any]:
+    ) -> tuple[list[node_visitor.Failure], None]:
         failures = cls.check_file(
-            filename, attribute_checker=attribute_checker, **kwargs
+            filename, attribute_checker=attribute_checker, checker=checker, **kwargs
         )
-        return failures, attribute_checker
+        return failures, None
+
+    @classmethod
+    def _snapshot_worker_state(
+        cls, kwargs: dict[str, Any]
+    ) -> _WorkerAttrData:
+        """Snapshot the accumulated cross-file state once after all files."""
+        attribute_checker = kwargs.get("attribute_checker")
+        checker = kwargs.get("checker")
+        if attribute_checker is None or checker is None:
+            return {
+                "attributes_set": {},
+                "modules_examined": set(),
+                "classes_examined": set(),
+                "types_with_dynamic_attrs": set(),
+                "reexport_completed": set(),
+                "reexport_exports": {},
+                "reexport_pending": {},
+            }
+        reexport = _serialize_reexport_data(checker)
+        return {
+            "attributes_set": dict(attribute_checker.attributes_set),
+            "modules_examined": set(attribute_checker.modules_examined),
+            "classes_examined": set(attribute_checker.classes_examined),
+            "types_with_dynamic_attrs": set(attribute_checker.types_with_dynamic_attrs),
+            "reexport_completed": reexport[0],
+            "reexport_exports": reexport[1],
+            "reexport_pending": reexport[2],
+        }
+
+    @classmethod
+    def _merge_worker_extra_data(
+        cls, extra_data: list[_WorkerAttrData]
+    ) -> _WorkerAttrData:
+        """No-op — snapshot is taken once, not per-file."""
+        return extra_data[0] if extra_data else {
+            "attributes_set": {},
+            "modules_examined": set(),
+            "classes_examined": set(),
+            "types_with_dynamic_attrs": set(),
+            "reexport_completed": set(),
+            "reexport_exports": {},
+            "reexport_pending": {},
+        }
 
     @classmethod
     def merge_extra_data(
         cls,
-        extra_data: Any,
+        extra_data: list[_WorkerAttrData],
         attribute_checker: Optional[ClassAttributeChecker] = None,
         **kwargs: Any,
     ) -> None:
+        """Merge small cross-file data from workers and resolve reexport checks.
+
+        attribute_is_never_set is handled by the two-phase fork in
+        _fork_parallel: workers keep attributes_read locally and run
+        check_attribute_reads() in Phase 2 after receiving the merged
+        attributes_set.  This method only handles reexport resolution.
+        """
         if attribute_checker is None:
             return
-        for checker in extra_data:
-            if checker is None:
-                continue
-            for serialized, attrs in checker.attributes_read.items():
-                attribute_checker.attributes_read[serialized] += attrs
-            for serialized, attrs in checker.attributes_set.items():
-                attribute_checker.attributes_set[serialized] |= attrs
-            for serialized, attrs in checker.attribute_values.items():
-                for attr_name, value in attrs.items():
-                    attribute_checker.merge_attribute_value(
-                        serialized, attr_name, value
-                    )
-            attribute_checker.modules_examined |= checker.modules_examined
-            attribute_checker.classes_examined |= checker.modules_examined
-            attribute_checker.types_with_dynamic_attrs |= (
-                checker.types_with_dynamic_attrs
-            )
-            attribute_checker.filename_to_visitor.update(checker.filename_to_visitor)
+        reexport_failures = _resolve_reexport_pending(
+            extra_data, attribute_checker.options
+        )
+        attribute_checker.all_failures.extend(reexport_failures)
 
     # Protocol compliance
     def visit_expression(self, node: ast.AST) -> Value:
         return self.visit(node)
+
+
+
+class _Phase2Visitor(node_visitor.BaseNodeVisitor):
+    """Lightweight visitor for Phase 2 cross-file error reporting.
+
+    Provides just enough interface for ClassAttributeChecker._check_attribute_read
+    to call show_error() and produce properly formatted failure dicts.
+    """
+
+    error_code_enum = None
+
+    def __init__(self, filename: str, options: Options) -> None:
+        try:
+            with open(filename, encoding="utf-8") as f:
+                contents = f.read()
+        except OSError:
+            contents = ""
+        tree = ast.Module(body=[], type_ignores=[])
+        super().__init__(filename, contents, tree)
+        self.options = options
+
+    def check(self) -> list[node_visitor.Failure]:
+        return self.all_failures
+
+    def log(self, level: int, label: str, value: object) -> None:
+        pass
 
 
 def build_stacked_scopes(
