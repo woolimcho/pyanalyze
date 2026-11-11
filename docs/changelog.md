@@ -26,6 +26,17 @@
   classes and type aliases (e.g. `Alias[[int, str]]`), and calls through
   values annotated with a type alias
 - Drop support for Python 3.9, 3.10 and 3.11
+- Detect `@deprecated` in stubs on Python 3.14
+- Support PEP 695 type aliases in stubs, and `*` unpacking (PEP 646) in
+  stubs and string annotations
+- Support subscripting generic aliases such as `Union[list[T], set[T]]` in
+  string annotations
+- Find overloads of functions whose `__module__` was changed after they were
+  defined, as pandas' `@set_module` does
+- Treat a match on an overload parameter whose annotation could not be
+  resolved as a match due to `Any`
+- Speed up option lookups, Pydantic class detection, and `unite_values()`
+  calls with a single value
 - Update PEP 728 support to the latest version, using the `extra_items=`
   class argument instead of an `__extra_items__` key in the dict. (#855)
 - Add support for Python 3.13 (#824)
