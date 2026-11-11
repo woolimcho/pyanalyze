@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Do not report a deprecated overload when a call matches it only through
+  `Any` and an earlier overload matches as well
 - Add support for Python 3.14 and 3.15, and drop support for Python 3.9, 3.10
   and 3.11
 - Require typeshed_client 2.15.0 or newer. Ignore `__slots__` in protocols
