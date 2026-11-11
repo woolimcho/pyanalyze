@@ -2,11 +2,17 @@
 
 ## Unreleased
 
-- Drop support for Python 3.9, 3.10 and 3.11
+- Add support for Python 3.14 and 3.15, and drop support for Python 3.9, 3.10
+  and 3.11
 - Require typeshed_client 2.15.0 or newer. Ignore `__slots__` in protocols
   defined in stubs, respect the type parameter order of `Protocol[...]`
   bases, and allow omitting type arguments for generic classes whose type
   parameters all have defaults
+- Support lazily evaluated annotations (PEP 649) that refer to names
+  defined only under `TYPE_CHECKING`
+- Support template strings (PEP 750), lazy imports (PEP 810) and unpacking
+  in comprehensions (PEP 798)
+- Fix crash on annotations using `types.UnionType` in Python 3.14+
 - Fix crash on `TypeAliasType` aliases with unhashable arguments, on
   truthiness checks of PEP 695 type aliases, and on classes inheriting
   from `Any`
@@ -17,6 +23,7 @@
 - Support lists of types as arguments for `ParamSpec` parameters of generic
   classes and type aliases (e.g. `Alias[[int, str]]`), and calls through
   values annotated with a type alias
+- Detect `@deprecated` in stubs on Python 3.14
 - Speed up option lookups, Pydantic class detection, and `unite_values()`
   calls with a single value
 - Update PEP 728 support to the latest version, using the `extra_items=`
