@@ -17,7 +17,7 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field, replace
 from enum import EnumMeta
 from types import GeneratorType, MethodDescriptorType, ModuleType
-from typing import Any, Generic, Optional, TypeVar, Union
+from typing import Any, Generic, TypeVar
 
 import qcore
 import typeshed_client
@@ -94,7 +94,7 @@ class _AnnotationContext(Context):
         self,
         message: str,
         error_code: Error = ErrorCode.invalid_annotation,
-        node: Optional[ast.AST] = None,
+        node: ast.AST | None = None,
     ) -> None:
         self.finder.log(message, ())
 
@@ -119,10 +119,10 @@ class _DummyErrorContext:
         e: str,
         error_code: node_visitor.ErrorCodeInstance,
         *,
-        detail: Optional[str] = None,
+        detail: str | None = None,
         save: bool = True,
-        extra_metadata: Optional[dict[str, Any]] = None,
-    ) -> Optional[Failure]:
+        extra_metadata: dict[str, Any] | None = None,
+    ) -> Failure | None:
         return None
 
 
@@ -186,7 +186,7 @@ class TypeshedFinder:
 
     def _get_sig_from_method_descriptor(
         self, obj: MethodDescriptorType, allow_call: bool
-    ) -> Optional[ConcreteSignature]:
+    ) -> ConcreteSignature | None:
         objclass = obj.__objclass__
         fq_name = self._get_fq_name(objclass)
         if fq_name is None:
@@ -203,7 +203,7 @@ class TypeshedFinder:
         *,
         allow_call: bool = False,
         type_params: Sequence[Value] = (),
-    ) -> Optional[ConcreteSignature]:
+    ) -> ConcreteSignature | None:
         if isinstance(obj, str):
             # Synthetic type
             return self.get_argspec_for_fully_qualified_name(
@@ -274,7 +274,7 @@ class TypeshedFinder:
         *,
         allow_call: bool = False,
         type_params: Sequence[Value] = (),
-    ) -> Optional[ConcreteSignature]:
+    ) -> ConcreteSignature | None:
         info = self._get_info_for_name(fq_name)
         mod, _ = fq_name.rsplit(".", maxsplit=1)
         sig = self._get_signature_from_info(
@@ -282,11 +282,11 @@ class TypeshedFinder:
         )
         return sig
 
-    def get_bases(self, typ: type) -> Optional[list[Value]]:
+    def get_bases(self, typ: type) -> list[Value] | None:
         """Return the base classes for this type, including generic bases."""
         return self.get_bases_for_value(TypedValue(typ))
 
-    def get_bases_for_value(self, val: Value) -> Optional[list[Value]]:
+    def get_bases_for_value(self, val: Value) -> list[Value] | None:
         if isinstance(val, TypedValue):
             if isinstance(val.typ, type):
                 typ = val.typ
@@ -333,7 +333,7 @@ class TypeshedFinder:
             for base in bases
         )
 
-    def get_bases_recursively(self, typ: Union[type, str]) -> list[Value]:
+    def get_bases_recursively(self, typ: type | str) -> list[Value]:
         stack = [TypedValue(typ)]
         seen = set()
         bases = []
@@ -349,7 +349,7 @@ class TypeshedFinder:
                 bases += new_bases
         return bases
 
-    def get_bases_for_fq_name(self, fq_name: str) -> Optional[list[Value]]:
+    def get_bases_for_fq_name(self, fq_name: str) -> list[Value] | None:
         if fq_name in (
             "typing.Generic",
             "typing.Protocol",
@@ -387,7 +387,7 @@ class TypeshedFinder:
 
     def get_attribute_recursively(
         self, fq_name: str, attr: str, *, on_class: bool
-    ) -> tuple[Value, Union[type, str, None]]:
+    ) -> tuple[Value, type | str | None]:
         """Get an attribute from a fully qualified class.
 
         Returns a tuple (value, provider).
@@ -407,7 +407,7 @@ class TypeshedFinder:
                     return possible_value, base.typ
         return UNINITIALIZED_VALUE, None
 
-    def has_attribute(self, typ: Union[type, str], attr: str) -> bool:
+    def has_attribute(self, typ: type | str, attr: str) -> bool:
         """Whether this type has this attribute in the stubs.
 
         Also looks at base classes.
@@ -427,7 +427,7 @@ class TypeshedFinder:
                     return True
         return False
 
-    def get_all_attributes(self, typ: Union[type, str]) -> set[str]:
+    def get_all_attributes(self, typ: type | str) -> set[str]:
         if isinstance(typ, str):
             fq_name = typ
         else:
@@ -497,9 +497,7 @@ class TypeshedFinder:
 
     def _get_value_from_child_info(
         self,
-        node: Union[
-            ast.AST, typeshed_client.OverloadedName, typeshed_client.ImportedName
-        ],
+        node: ast.AST | typeshed_client.OverloadedName | typeshed_client.ImportedName,
         mod: str,
         *,
         is_typeddict: bool,
@@ -554,7 +552,7 @@ class TypeshedFinder:
 
     def _get_child_info(
         self, info: typeshed_client.resolver.ResolvedName, attr: str, mod: str
-    ) -> Optional[tuple[typeshed_client.resolver.ResolvedName, str]]:
+    ) -> tuple[typeshed_client.resolver.ResolvedName, str] | None:
         if info is None:
             return None
         elif isinstance(info, typeshed_client.ImportedInfo):
@@ -570,7 +568,7 @@ class TypeshedFinder:
                 return None
         return None
 
-    def _has_own_attribute(self, typ: Union[type, str], attr: str) -> bool:
+    def _has_own_attribute(self, typ: type | str, attr: str) -> bool:
         # Special case since otherwise we think every object has every attribute
         if typ is object and attr == "__getattribute__":
             return False
@@ -633,7 +631,7 @@ class TypeshedFinder:
 
     def _get_bases_from_info(
         self, info: typeshed_client.resolver.ResolvedName, mod: str, fq_name: str
-    ) -> Optional[list[Value]]:
+    ) -> list[Value] | None:
         if info is None:
             return None
         elif isinstance(info, typeshed_client.ImportedInfo):
@@ -680,7 +678,7 @@ class TypeshedFinder:
         objclass: type,
         *,
         allow_call: bool = False,
-    ) -> Optional[ConcreteSignature]:
+    ) -> ConcreteSignature | None:
         if info is None:
             return None
         elif isinstance(info, typeshed_client.ImportedInfo):
@@ -705,7 +703,7 @@ class TypeshedFinder:
             self.log("Ignoring unrecognized info", (fq_name, info))
             return None
 
-    def _get_fq_name(self, obj: Any) -> Optional[str]:
+    def _get_fq_name(self, obj: Any) -> str | None:
         if obj is GeneratorType:
             return "typing.Generator"
         # It claims to be io.open, but typeshed puts it in builtins
@@ -725,7 +723,7 @@ class TypeshedFinder:
             self.log("Ignoring object without module or qualname", obj)
             return None
 
-    def _sig_from_value(self, val: Value) -> Optional[ConcreteSignature]:
+    def _sig_from_value(self, val: Value) -> ConcreteSignature | None:
         val, extensions = unannotate_value(val, DeprecatedExtension)
         if isinstance(val, AnnotatedValue):
             val = val.value
@@ -743,11 +741,11 @@ class TypeshedFinder:
         obj: object,
         fq_name: str,
         mod: str,
-        objclass: Optional[type] = None,
+        objclass: type | None = None,
         *,
         allow_call: bool = False,
         type_params: Sequence[Value] = (),
-    ) -> Optional[ConcreteSignature]:
+    ) -> ConcreteSignature | None:
         if isinstance(info, typeshed_client.NameInfo):
             if isinstance(info.ast, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 return self._get_signature_from_func_def(
@@ -841,14 +839,14 @@ class TypeshedFinder:
 
     def _get_signature_from_func_def(
         self,
-        node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
         obj: object,
         mod: str,
-        objclass: Optional[type] = None,
+        objclass: type | None = None,
         *,
         autobind: bool = False,
         allow_call: bool = False,
-    ) -> Optional[Signature]:
+    ) -> Signature | None:
         is_classmethod = is_staticmethod = is_evaluated = False
         deprecated = None
         for decorator_ast in node.decorator_list:
@@ -963,10 +961,10 @@ class TypeshedFinder:
     def _parse_param_list(
         self,
         args: Iterable[ast.arg],
-        defaults: Iterable[Optional[ast.AST]],
+        defaults: Iterable[ast.AST | None],
         module: str,
         kind: ParameterKind,
-        objclass: Optional[type] = None,
+        objclass: type | None = None,
     ) -> Iterable[SigParameter]:
         for i, (arg, default) in enumerate(zip(args, defaults)):
             yield self._parse_param(
@@ -976,11 +974,11 @@ class TypeshedFinder:
     def _parse_param(
         self,
         arg: ast.arg,
-        default: Optional[ast.AST],
+        default: ast.AST | None,
         module: str,
         kind: ParameterKind,
         *,
-        objclass: Optional[type] = None,
+        objclass: type | None = None,
     ) -> SigParameter:
         typ = AnyValue(AnySource.unannotated)
         if arg.annotation is not None:
@@ -1075,7 +1073,7 @@ class TypeshedFinder:
 
     def _extract_extension_from_decorator(
         self, decorator_val: Value
-    ) -> Optional[Extension]:
+    ) -> Extension | None:
         if (
             isinstance(decorator_val, DecoratorValue)
             and decorator_val.decorator is deprecated_decorator

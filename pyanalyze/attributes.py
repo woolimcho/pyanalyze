@@ -11,7 +11,7 @@ import types
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, ClassVar, Optional, Union
+from typing import Any, Callable, ClassVar
 
 import qcore
 
@@ -91,7 +91,7 @@ class AttrContext:
         return None
 
     def get_generic_bases(
-        self, typ: Union[type, str], generic_args: Sequence[Value]
+        self, typ: type | str, generic_args: Sequence[Value]
     ) -> GenericBases:
         return {}
 
@@ -210,7 +210,7 @@ class TreatClassAttributeAsAny(PyObjectSequenceOption[_TCAA]):
         return any(func(val) for func in option_value)
 
 
-_CAT = Callable[[object], Optional[tuple[Value, Value]]]
+_CAT = Callable[[object], tuple[Value, Value] | None]
 
 
 class ClassAttributeTransformer(PyObjectSequenceOption[_CAT]):
@@ -231,7 +231,7 @@ class ClassAttributeTransformer(PyObjectSequenceOption[_CAT]):
     name = "class_attribute_transformers"
 
     @classmethod
-    def transform_attribute(cls, val: object, options: Options) -> Optional[Value]:
+    def transform_attribute(cls, val: object, options: Options) -> Value | None:
         option_value = options.get_value_for(cls)
         for transformer in option_value:
             result = transformer(val)
@@ -312,7 +312,7 @@ def _get_attribute_from_typed(
 
 
 def _substitute_typevars(
-    typ: Union[type, str],
+    typ: type | str,
     generic_args: Sequence[Value],
     result: Value,
     provider: object,
@@ -395,10 +395,10 @@ def _unwrap_value_from_typed(result: Value, typ: type, ctx: AttrContext) -> Valu
         return result
 
 
-_KAH = Callable[[object, str], Optional[Value]]
+_KAH = Callable[[object, str], Value | None]
 
 
-def _default_transformer(obj: object, attr: str) -> Optional[Value]:
+def _default_transformer(obj: object, attr: str) -> Value | None:
     # Type alias to Any
     if obj is Any:
         return AnyValue(AnySource.explicit)
@@ -417,7 +417,7 @@ class KnownAttributeHook(PyObjectSequenceOption[_KAH]):
     name = "known_attribute_hook"
 
     @classmethod
-    def get_attribute(cls, obj: object, attr: str, options: Options) -> Optional[Value]:
+    def get_attribute(cls, obj: object, attr: str, options: Options) -> Value | None:
         option_value = options.get_value_for(cls)
         for transformer in option_value:
             result = transformer(obj, attr)
@@ -606,7 +606,7 @@ def _static_hasattr(value: object, attr: str) -> bool:
         return True
 
 
-def get_attrs_attribute(typ: object, ctx: AttrContext) -> Optional[Value]:
+def get_attrs_attribute(typ: object, ctx: AttrContext) -> Value | None:
     try:
         if hasattr(typ, "__attrs_attrs__"):
             for attr_attr in typ.__attrs_attrs__:

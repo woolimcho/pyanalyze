@@ -10,7 +10,7 @@ import inspect
 import types
 from collections.abc import Generator
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import asynq
 import qcore
@@ -67,12 +67,12 @@ class MethodsNotCheckedForAsynq(StringSequenceOption):
 @dataclass
 class AsynqChecker:
     options: Options
-    module: Optional[types.ModuleType]
+    module: types.ModuleType | None
     on_error: Callable[..., Any]
     log: Callable[..., Any]
     replace_node: Callable[..., Any]
-    current_func_name: Optional[str] = field(init=False, default=None)
-    current_class: Optional[type] = field(init=False, default=None)
+    current_func_name: str | None = field(init=False, default=None)
+    current_class: type | None = field(init=False, default=None)
     current_async_kind: AsyncFunctionKind = field(
         init=False, default=AsyncFunctionKind.non_async
     )
@@ -188,8 +188,8 @@ class AsynqChecker:
     def _show_impure_async_error(
         self,
         node: ast.AST,
-        replacement_call: Optional[str] = None,
-        replacement_node: Optional[ast.AST] = None,
+        replacement_call: str | None = None,
+        replacement_node: ast.AST | None = None,
     ) -> None:
         op = "await" if self.is_native_async else "yield"
         if replacement_call is None:

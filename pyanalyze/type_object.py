@@ -8,7 +8,7 @@ import collections.abc
 import inspect
 from collections.abc import Container, Sequence
 from dataclasses import dataclass, field
-from typing import Callable, Union, cast
+from typing import Callable, cast
 from unittest import mock
 
 from pyanalyze.signature import (
@@ -37,7 +37,7 @@ from .value import (
 )
 
 
-def get_mro(typ: Union[type, super]) -> Sequence[type]:
+def get_mro(typ: type | super) -> Sequence[type]:
     if isinstance(typ, super):
         typ_for_mro = typ.__thisclass__
     else:
@@ -51,8 +51,8 @@ def get_mro(typ: Union[type, super]) -> Sequence[type]:
 
 @dataclass
 class TypeObject:
-    typ: Union[type, super, str]
-    base_classes: set[Union[type, str]] = field(default_factory=set)
+    typ: type | super | str
+    base_classes: set[type | str] = field(default_factory=set)
     is_protocol: bool = False
     protocol_members: set[str] = field(default_factory=set)
     is_thrift_enum: bool = field(init=False)
@@ -110,7 +110,7 @@ class TypeObject:
     def can_assign(
         self,
         self_val: Value,
-        other_val: Union[KnownValue, TypedValue, SubclassValue],
+        other_val: KnownValue | TypedValue | SubclassValue,
         ctx: CanAssignContext,
     ) -> CanAssign:
         other = other_val.get_type_object(ctx)

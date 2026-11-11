@@ -20,7 +20,7 @@ from ast import (
 )
 from collections.abc import Container, Sequence
 from dataclasses import dataclass, replace
-from typing import Callable, Optional, TypeVar, Union
+from typing import Callable, TypeVar
 
 import qcore
 
@@ -129,7 +129,7 @@ class LenPredicate:
     has_star: bool
     ctx: CanAssignContext
 
-    def __call__(self, value: Value, positive: bool) -> Optional[Value]:
+    def __call__(self, value: Value, positive: bool) -> Value | None:
         value_len = len_of_value(value)
         if isinstance(value_len, KnownValue) and isinstance(value_len.val, int):
             if self.has_star:
@@ -159,7 +159,7 @@ class LenPredicate:
 
 @dataclass
 class AlwaysMatching:
-    def __call__(self, value: Value, positive: bool) -> Optional[Value]:
+    def __call__(self, value: Value, positive: bool) -> Value | None:
         if positive:
             return value
         else:
@@ -416,7 +416,7 @@ class PatmaVisitor(ast.NodeVisitor):
             )
 
 
-def index_of(elts: Sequence[T], pred: Callable[[T], bool]) -> Optional[int]:
+def index_of(elts: Sequence[T], pred: Callable[[T], bool]) -> int | None:
     for i, elt in enumerate(elts):
         if pred(elt):
             return i
@@ -470,7 +470,7 @@ def get_value_from_kv_pairs(
 
 def get_match_args(
     cls: Value, visitor: "pyanalyze.name_check_visitor.NameCheckVisitor"
-) -> Union[CanAssignError, Sequence[Union[str, SpecialPositionalMatch]]]:
+) -> CanAssignError | Sequence[str | SpecialPositionalMatch]:
     if SpecialClassPatternValue.is_assignable(cls, visitor):
         return [SpecialPositionalMatch.self]
     match_args_value = visitor.get_attribute(Composite(cls), "__match_args__")

@@ -5,7 +5,6 @@ TypeVar solver.
 """
 
 from collections.abc import Iterable, Sequence
-from typing import Union
 
 import qcore
 
@@ -55,7 +54,7 @@ def resolve_bounds_map(
 
 def solve_paramspec(
     bounds: Sequence[Bound], ctx: CanAssignContext
-) -> Union[Value, CanAssignError]:
+) -> Value | CanAssignError:
     if not bounds:
         return CanAssignError("Unsupported ParamSpec")
     bound = bounds[0]
@@ -78,9 +77,7 @@ def solve_paramspec(
     return solution
 
 
-def solve(
-    bounds: Iterable[Bound], ctx: CanAssignContext
-) -> Union[Value, CanAssignError]:
+def solve(bounds: Iterable[Bound], ctx: CanAssignContext) -> Value | CanAssignError:
     bottom = BOTTOM
     top = TOP
     options = None

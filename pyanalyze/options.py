@@ -12,7 +12,7 @@ from collections import defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar, Generic, Optional, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar
 
 import qcore
 import tomli
@@ -246,7 +246,7 @@ class Options:
     def from_option_list(
         cls,
         instances: Sequence[ConfigOption[Any]] = (),
-        config_file_path: Optional[Path] = None,
+        config_file_path: Path | None = None,
     ) -> "Options":
         if config_file_path:
             instances = [*instances, *parse_config_file(config_file_path)]

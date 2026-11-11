@@ -13,11 +13,11 @@ import types
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional, Union
+from typing import Callable
 
 
 def _all_files(
-    root: Union[str, Path], filter_function: Optional[Callable[[str], bool]] = None
+    root: str | Path, filter_function: Callable[[str], bool] | None = None
 ) -> set[str]:
     """Returns the set of all files at the given root.
 
@@ -34,7 +34,7 @@ def _all_files(
 
 
 def files_with_extension_from_directory(
-    extension: str, dirname: Union[str, Path]
+    extension: str, dirname: str | Path
 ) -> set[str]:
     """Finds all files in a given directory with this extension."""
     return _all_files(dirname, filter_function=lambda fn: fn.endswith("." + extension))
@@ -48,9 +48,7 @@ def get_indentation(line: str) -> int:
     return len(line) - len(line.lstrip())
 
 
-def get_line_range_for_node(
-    node: Union[ast.stmt, ast.expr], lines: list[str]
-) -> list[int]:
+def get_line_range_for_node(node: ast.stmt | ast.expr, lines: list[str]) -> list[int]:
     """Returns the lines taken up by a Python ast node.
 
     lines is a list of code lines for the file the node came from.
@@ -127,7 +125,7 @@ def make_module(
     return mod
 
 
-def is_positional_only_arg_name(name: str, class_name: Optional[str] = None) -> bool:
+def is_positional_only_arg_name(name: str, class_name: str | None = None) -> bool:
     # https://www.python.org/dev/peps/pep-0484/#positional-only-arguments
     # Work around Python's name mangling
     if class_name is not None:
@@ -137,7 +135,7 @@ def is_positional_only_arg_name(name: str, class_name: Optional[str] = None) -> 
     return name.startswith("__") and not name.endswith("__")
 
 
-def get_attribute_path(node: ast.AST) -> Optional[list[str]]:
+def get_attribute_path(node: ast.AST) -> list[str] | None:
     """Gets the full path of an attribute lookup.
 
     For example, the code string "a.model.question.Question" will resolve to the path

@@ -166,7 +166,7 @@ class Context:
         self,
         message: str,
         error_code: Error = ErrorCode.invalid_annotation,
-        node: Optional[ast.AST] = None,
+        node: ast.AST | None = None,
     ) -> None:
         """Show an error found while evaluating an annotation."""
         pass
@@ -237,7 +237,7 @@ class SyntheticEvaluator(type_evaluation.Evaluator):
         self,
         message: str,
         error_code: Error = ErrorCode.invalid_annotation,
-        node: Optional[ast.AST] = None,
+        node: ast.AST | None = None,
     ) -> None:
         self.error_ctx.show_error(node or self.node, message, error_code=error_code)
 
@@ -272,7 +272,7 @@ class SyntheticEvaluator(type_evaluation.Evaluator):
 def type_from_ast(
     ast_node: ast.AST,
     visitor: Optional["NameCheckVisitor"] = None,
-    ctx: Optional[Context] = None,
+    ctx: Context | None = None,
 ) -> Value:
     """Given an AST node representing an annotation, return a
     :class:`Value <pyanalyze.value.Value>`.
@@ -295,9 +295,9 @@ def type_from_annotations(
     annotations: Mapping[str, object],
     key: str,
     *,
-    globals: Optional[Mapping[str, object]] = None,
-    ctx: Optional[Context] = None,
-) -> Optional[Value]:
+    globals: Mapping[str, object] | None = None,
+    ctx: Context | None = None,
+) -> Value | None:
     try:
         annotation = annotations[key]
     except Exception:
@@ -313,9 +313,9 @@ def type_from_annotations(
 def type_from_runtime(
     val: object,
     visitor: Optional["NameCheckVisitor"] = None,
-    node: Optional[ast.AST] = None,
-    globals: Optional[Mapping[str, object]] = None,
-    ctx: Optional[Context] = None,
+    node: ast.AST | None = None,
+    globals: Mapping[str, object] | None = None,
+    ctx: Context | None = None,
     *,
     allow_unpack: bool = False,
 ) -> Value:
@@ -349,8 +349,8 @@ def type_from_runtime(
 def type_from_value(
     value: Value,
     visitor: Optional["NameCheckVisitor"] = None,
-    node: Optional[ast.AST] = None,
-    ctx: Optional[Context] = None,
+    node: ast.AST | None = None,
+    ctx: Context | None = None,
     *,
     is_typeddict: bool = False,
     allow_unpack: bool = False,
@@ -646,9 +646,9 @@ def _get_typeddict_value(
     value: Value,
     ctx: Context,
     key: str,
-    required_keys: Optional[Container[str]],
+    required_keys: Container[str] | None,
     total: bool,
-    readonly_keys: Optional[Container[str]],
+    readonly_keys: Container[str] | None,
 ) -> TypedDictEntry:
     val = _type_from_runtime(value, ctx, is_typeddict=True)
     if required_keys is None:
@@ -729,7 +729,7 @@ def _type_from_value(
 
 
 def _type_from_subscripted_value(
-    root: Optional[Value],
+    root: Value | None,
     members: Sequence[Value],
     ctx: Context,
     *,
@@ -894,7 +894,7 @@ def _type_from_subscripted_value(
         return AnyValue(AnySource.error)
 
 
-def _maybe_get_extra(origin: type) -> Union[type, str]:
+def _maybe_get_extra(origin: type) -> type | str:
     # ContextManager is defined oddly and we lose the Protocol if we don't use
     # synthetic types.
     if any(origin is cls for cls in CONTEXT_MANAGER_TYPES):
@@ -909,8 +909,8 @@ class _DefaultContext(Context):
     def __init__(
         self,
         visitor: "NameCheckVisitor",
-        node: Optional[ast.AST],
-        globals: Optional[Mapping[str, object]] = None,
+        node: ast.AST | None,
+        globals: Mapping[str, object] | None = None,
         use_name_node_for_error: bool = False,
     ) -> None:
         super().__init__()
@@ -923,7 +923,7 @@ class _DefaultContext(Context):
         self,
         message: str,
         error_code: Error = ErrorCode.invalid_annotation,
-        node: Optional[ast.AST] = None,
+        node: ast.AST | None = None,
     ) -> None:
         if node is None:
             node = self.node
@@ -971,7 +971,7 @@ class _DefaultContext(Context):
 
 @dataclass(frozen=True)
 class _SubscriptedValue(Value):
-    root: Optional[Value]
+    root: Value | None
     members: tuple[Value, ...]
 
 
@@ -1010,7 +1010,7 @@ class _Visitor(ast.NodeVisitor):
             members = (index,)
         return _SubscriptedValue(value, members)
 
-    def visit_Attribute(self, node: ast.Attribute) -> Optional[Value]:
+    def visit_Attribute(self, node: ast.Attribute) -> Value | None:
         root_value = self.visit(node.value)
         return self.ctx.get_attribute(root_value, node)
 
@@ -1050,7 +1050,7 @@ class _Visitor(ast.NodeVisitor):
     def visit_Expr(self, node: ast.Expr) -> Value:
         return self.visit(node.value)
 
-    def visit_BinOp(self, node: ast.BinOp) -> Optional[Value]:
+    def visit_BinOp(self, node: ast.BinOp) -> Value | None:
         if isinstance(node.op, ast.BitOr):
             return _SubscriptedValue(
                 KnownValue(Union), (self.visit(node.left), self.visit(node.right))
@@ -1058,7 +1058,7 @@ class _Visitor(ast.NodeVisitor):
         else:
             return None
 
-    def visit_UnaryOp(self, node: ast.UnaryOp) -> Optional[Value]:
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Value | None:
         # Only int and float negation on literals are supported.
         if isinstance(node.op, ast.USub):
             operand = self.visit(node.operand)
@@ -1068,7 +1068,7 @@ class _Visitor(ast.NodeVisitor):
                 return KnownValue(-operand.val)
         return None
 
-    def visit_Call(self, node: ast.Call) -> Optional[Value]:
+    def visit_Call(self, node: ast.Call) -> Value | None:
         func = self.visit(node.func)
         if not isinstance(func, KnownValue):
             return None
@@ -1318,7 +1318,7 @@ def _type_from_type_arg(arg: object, ctx: Context) -> Value:
     return _type_from_runtime(arg, ctx)
 
 
-def _maybe_typed_value(val: Union[type, str]) -> Value:
+def _maybe_typed_value(val: type | str) -> Value:
     if val is type(None):
         return KnownValue(None)
     elif val is Hashable:
@@ -1414,7 +1414,7 @@ def _make_callable_from_value(
 
 
 def _make_annotated(origin: Value, metadata: Sequence[Value], ctx: Context) -> Value:
-    metadata_objs: list[Union[Value, Extension]] = []
+    metadata_objs: list[Value | Extension] = []
     for entry in metadata:
         if isinstance(entry, KnownValue):
             if isinstance(entry.val, ParameterTypeGuard):
@@ -1463,5 +1463,5 @@ _CONTEXT_MANAGER_TYPES = {
 }
 
 
-def is_context_manager_type(typ: Union[str, type]) -> bool:
+def is_context_manager_type(typ: str | type) -> bool:
     return typ in _CONTEXT_MANAGER_TYPES

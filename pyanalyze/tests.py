@@ -6,7 +6,7 @@ Functions to be used in test_scope unit tests.
 """
 
 from collections.abc import Sequence
-from typing import ClassVar, NoReturn, Union, overload
+from typing import ClassVar, NoReturn, overload
 
 import qcore
 from asynq import AsyncTask, ConstFuture, async_proxy, asynq, get_async_fn, result
@@ -224,7 +224,7 @@ def overloaded() -> int: ...
 def overloaded(x: str) -> str: ...
 
 
-def overloaded(*args: str) -> Union[int, str]:
+def overloaded(*args: str) -> int | str:
     if len(args) == 0:
         return len(args)
     elif len(args) == 1:

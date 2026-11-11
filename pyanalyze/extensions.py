@@ -15,16 +15,7 @@ from collections import defaultdict
 from collections.abc import Container, Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import (
-    TYPE_CHECKING,
-    Annotated,
-    Any,
-    Callable,
-    NoReturn,
-    Optional,
-    TypeVar,
-    Union,
-)
+from typing import TYPE_CHECKING, Annotated, Any, Callable, NoReturn, TypeVar
 from typing import overload as real_overload
 
 import typing_extensions
@@ -167,7 +158,7 @@ class ValidRegex(CustomCheck):
 
 class _AsynqCallableMeta(type):
     def __getitem__(
-        self, params: tuple[Union[Literal[Ellipsis], list[object]], object]
+        self, params: tuple[Literal[Ellipsis] | list[object], object]
     ) -> Any:
         if not isinstance(params, tuple) or len(params) != 2:
             raise TypeError(
@@ -197,7 +188,7 @@ class AsynqCallable(metaclass=_AsynqCallableMeta):
 
     """
 
-    args: Union[Literal[Ellipsis], tuple[object, ...]]
+    args: Literal[Ellipsis] | tuple[object, ...]
     return_type: object
 
     # Returns AsynqCallable but pyanalyze interprets that as AsynqCallable[..., Any]
@@ -595,7 +586,7 @@ def is_of_type(arg: Any, type: Any, *, exclude_any: bool = False) -> bool:
     )
 
 
-def show_error(message: str, *, argument: Optional[Any] = None) -> bool:
+def show_error(message: str, *, argument: Any | None = None) -> bool:
     """Helper function for type evaluators.
 
     May not be called at runtime.

@@ -11,7 +11,7 @@ import types
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from itertools import zip_longest
-from typing import Optional, TypeVar, Union
+from typing import TypeVar
 
 import asynq
 from typing_extensions import Protocol
@@ -43,8 +43,8 @@ from .value import (
     unite_values,
 )
 
-FunctionDefNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
-FunctionNode = Union[FunctionDefNode, ast.Lambda]
+FunctionDefNode = ast.FunctionDef | ast.AsyncFunctionDef
+FunctionNode = FunctionDefNode | ast.Lambda
 IMPLICIT_CLASSMETHODS = ("__init_subclass__", "__new__")
 
 YieldT = TypeVar("YieldT")
@@ -91,8 +91,8 @@ class FunctionInfo:
     decorators: list[tuple[Value, Value, ast.AST]]
     node: FunctionNode
     params: Sequence[ParamInfo]
-    return_annotation: Optional[Value]
-    potential_function: Optional[object]
+    return_annotation: Value | None
+    potential_function: object | None
     type_params: Sequence[TypeVarValue]
 
     def get_generator_yield_type(self, ctx: CanAssignContext) -> Value:
@@ -210,7 +210,7 @@ def _visit_default(node: ast.AST, ctx: Context) -> Value:
 
 def compute_parameters(
     node: FunctionNode,
-    enclosing_class: Optional[TypedValue],
+    enclosing_class: TypedValue | None,
     ctx: Context,
     *,
     is_nested_in_class: bool = False,
@@ -244,7 +244,7 @@ def compute_parameters(
     params = []
     tv_index = 1
 
-    seen_paramspec_args: Optional[tuple[ast.arg, ParamSpecArgsValue]] = None
+    seen_paramspec_args: tuple[ast.arg, ParamSpecArgsValue] | None = None
     for idx, (param, default) in enumerate(zip_longest(args, defaults)):
         assert param is not None, "must have more args than defaults"
         (kind, arg) = param
@@ -339,8 +339,8 @@ def translate_vararg_type(
     typ: Value,
     can_assign_ctx: CanAssignContext,
     *,
-    error_ctx: Optional[ErrorContext] = None,
-    node: Optional[ast.AST] = None,
+    error_ctx: ErrorContext | None = None,
+    node: ast.AST | None = None,
 ) -> Value:
     if kind is ParameterKind.VAR_POSITIONAL:
         if isinstance(typ, UnpackedValue):
@@ -407,7 +407,7 @@ class IsGeneratorVisitor(ast.NodeVisitor):
 
 
 def compute_value_of_function(
-    info: FunctionInfo, ctx: Context, *, result: Optional[Value] = None
+    info: FunctionInfo, ctx: Context, *, result: Value | None = None
 ) -> Value:
     if result is None:
         result = info.return_annotation

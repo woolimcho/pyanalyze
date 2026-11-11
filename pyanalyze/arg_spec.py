@@ -18,7 +18,7 @@ from collections.abc import Generator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from re import Pattern
 from types import FunctionType, MethodType, ModuleType, SimpleNamespace
-from typing import Any, Callable, Generic, Optional, TypeVar, Union
+from typing import Any, Callable, Generic, TypeVar
 from unittest import mock
 
 import asynq
@@ -165,7 +165,7 @@ def is_dot_asynq_function(obj: Any, native: bool = False) -> bool:
 @dataclass
 class AnnotationsContext(Context):
     arg_spec_cache: "ArgSpecCache"
-    globals: Optional[Mapping[str, object]] = None
+    globals: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         super().__init__()
@@ -239,7 +239,7 @@ class FunctionsSafeToCall(PyObjectSequenceOption[object]):
     ]
 
 
-_HookReturn = Union[None, ConcreteSignature, inspect.Signature, Callable[..., Any]]
+_HookReturn = None | ConcreteSignature | inspect.Signature | Callable[..., Any]
 _ConstructorHook = Callable[[type], _HookReturn]
 
 
@@ -319,15 +319,15 @@ else:
     # pytest's own overloads for pytest.raises infer less precise
     # types, so we specify the overloads manually.
     def _raises_overload1(
-        expected_exception: Union[type[_E], tuple[type[_E], ...]],
+        expected_exception: type[_E] | tuple[type[_E], ...],
         *,
-        match: Optional[Union[str, Pattern[str]]] = ...,
+        match: str | Pattern[str] | None = ...,
     ) -> pytest.RaisesExc[_E]:
         raise NotImplementedError
 
     # TODO use ParamSpec here
     def _raises_overload2(
-        expected_exception: Union[type[_E], tuple[type[_E], ...]],
+        expected_exception: type[_E] | tuple[type[_E], ...],
         func: Callable[..., Any],
         *args: Any,
         **kwargs: Any,
@@ -356,7 +356,7 @@ class ArgSpecCache:
         ts_finder: TypeshedFinder,
         ctx: CanAssignContext,
         *,
-        vnv_provider: Callable[[str], Optional[Value]] = lambda _: None,
+        vnv_provider: Callable[[str], Value | None] = lambda _: None,
     ) -> None:
         self.vnv_provider = vnv_provider
         self.options = options
@@ -380,12 +380,12 @@ class ArgSpecCache:
         self,
         sig: inspect.Signature,
         *,
-        impl: Optional[Impl] = None,
+        impl: Impl | None = None,
         callable_object: object,
         function_object: object,
         is_async: bool = False,
         is_asynq: bool = False,
-        returns: Optional[Value] = None,
+        returns: Value | None = None,
         allow_call: bool = False,
     ) -> Signature:
         """Constructs a pyanalyze Signature from an inspect.Signature.
@@ -419,7 +419,7 @@ class ArgSpecCache:
                 returns = make_coro_type(returns)
 
         parameters = []
-        seen_paramspec_args: Optional[ParamSpecArgsValue] = None
+        seen_paramspec_args: ParamSpecArgsValue | None = None
         for i, parameter in enumerate(sig.parameters.values()):
             param, make_everything_pos_only, new_ps_args = self._make_sig_parameter(
                 parameter,
@@ -454,12 +454,12 @@ class ArgSpecCache:
     def _make_sig_parameter(
         self,
         parameter: inspect.Parameter,
-        func_globals: Optional[Mapping[str, object]],
-        function_object: Optional[object],
+        func_globals: Mapping[str, object] | None,
+        function_object: object | None,
         is_wrapped: bool,
         index: int,
-        seen_paramspec_args: Optional[ParamSpecArgsValue],
-    ) -> tuple[Optional[SigParameter], bool, Optional[ParamSpecArgsValue]]:
+        seen_paramspec_args: ParamSpecArgsValue | None,
+    ) -> tuple[SigParameter | None, bool, ParamSpecArgsValue | None]:
         """Given an inspect.Parameter, returns a Parameter object."""
         if is_wrapped:
             typ = AnyValue(AnySource.inference)
@@ -504,8 +504,8 @@ class ArgSpecCache:
     def _get_type_for_parameter(
         self,
         parameter: inspect.Parameter,
-        func_globals: Optional[Mapping[str, object]],
-        function_object: Optional[object],
+        func_globals: Mapping[str, object] | None,
+        function_object: object | None,
         index: int,
     ) -> Value:
         if parameter.annotation is not inspect.Parameter.empty:
@@ -559,7 +559,7 @@ class ArgSpecCache:
     def get_argspec(
         self,
         obj: object,
-        impl: Optional[Impl] = None,
+        impl: Impl | None = None,
         is_asynq: bool = False,
         allow_synthetic_type: bool = False,
     ) -> MaybeSignature:
@@ -571,7 +571,7 @@ class ArgSpecCache:
         )
 
     def get_concrete_signature(
-        self, obj: object, impl: Optional[Impl] = None, *, allow_call: bool = False
+        self, obj: object, impl: Impl | None = None, *, allow_call: bool = False
     ) -> Signature:
         """Return a concrete signature for an object."""
         sig = self.get_argspec(obj, impl=impl)
@@ -582,7 +582,7 @@ class ArgSpecCache:
     def _cached_get_argspec(
         self,
         obj: object,
-        impl: Optional[Impl],
+        impl: Impl | None,
         is_asynq: bool,
         in_overload_resolution: bool,
     ) -> MaybeSignature:
@@ -605,7 +605,7 @@ class ArgSpecCache:
         return extended
 
     def _maybe_make_evaluator_sig(
-        self, func: Callable[..., Any], impl: Optional[Impl], is_asynq: bool
+        self, func: Callable[..., Any], impl: Impl | None, is_asynq: bool
     ) -> MaybeSignature:
         try:
             key = f"{func.__module__}.{func.__qualname__}"
@@ -643,11 +643,7 @@ class ArgSpecCache:
         return OverloadedSignature(sigs)
 
     def _uncached_get_argspec(
-        self,
-        obj: Any,
-        impl: Optional[Impl],
-        is_asynq: bool,
-        in_overload_resolution: bool,
+        self, obj: Any, impl: Impl | None, is_asynq: bool, in_overload_resolution: bool
     ) -> MaybeSignature:
         if isinstance(obj, tuple):
             return None  # lost cause
@@ -964,11 +960,8 @@ class ArgSpecCache:
         return None
 
     def _maybe_make_overloaded_signature(
-        self,
-        overloads: Sequence[Callable[..., Any]],
-        impl: Optional[Impl],
-        is_asynq: bool,
-    ) -> Optional[OverloadedSignature]:
+        self, overloads: Sequence[Callable[..., Any]], impl: Impl | None, is_asynq: bool
+    ) -> OverloadedSignature | None:
         if not overloads:
             return None
         sigs = [
@@ -993,7 +986,7 @@ class ArgSpecCache:
         else:
             return ANY_SIGNATURE
 
-    def _safe_get_signature(self, obj: Any) -> Optional[inspect.Signature]:
+    def _safe_get_signature(self, obj: Any) -> inspect.Signature | None:
         """Wrapper around inspect.getargspec that catches TypeErrors."""
         try:
             # follow_wrapped=True leads to problems with decorators that
@@ -1013,14 +1006,14 @@ class ArgSpecCache:
             # Python 2.
             return None
 
-    def get_type_parameters(self, typ: Union[type, str]) -> list[Value]:
+    def get_type_parameters(self, typ: type | str) -> list[Value]:
         bases = self.get_generic_bases(typ, substitute_typevars=False)
         tv_map = bases.get(typ, {})
         return [tv for tv in tv_map.values()]
 
     def get_generic_bases(
         self,
-        typ: Union[type, str],
+        typ: type | str,
         generic_args: Sequence[Value] = (),
         *,
         substitute_typevars: bool = True,
@@ -1053,7 +1046,7 @@ class ArgSpecCache:
             for base, args in generic_bases.items()
         }
 
-    def _get_generic_bases_cached(self, typ: Union[type, str]) -> GenericBases:
+    def _get_generic_bases_cached(self, typ: type | str) -> GenericBases:
         try:
             return self.generic_bases_cache[typ]
         except KeyError:
@@ -1081,8 +1074,8 @@ class ArgSpecCache:
         return generic_bases
 
     def _extract_bases(
-        self, typ: Union[type, str], bases: Optional[Sequence[Value]]
-    ) -> Optional[GenericBases]:
+        self, typ: type | str, bases: Sequence[Value] | None
+    ) -> GenericBases | None:
         if bases is None:
             return None
         # Put Generic and Protocol first since they determine the order of the
@@ -1146,7 +1139,7 @@ def _is_qcore_decorator(obj: object) -> TypeGuard[Any]:
         return False
 
 
-def _get_class_name(obj: object) -> Optional[str]:
+def _get_class_name(obj: object) -> str | None:
     if hasattr_static(obj, "__qualname__"):
         pieces = obj.__qualname__.split(".")
         if len(pieces) >= 2:
