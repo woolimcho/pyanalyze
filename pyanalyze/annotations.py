@@ -61,7 +61,7 @@ from .extensions import (
 from .find_unused import used
 from .functions import FunctionDefNode
 from .node_visitor import ErrorContext
-from .safe import is_instance_of_typing_name, is_typing_name, is_union
+from .safe import is_hashable, is_instance_of_typing_name, is_typing_name, is_union
 from .signature import (
     ANY_SIGNATURE,
     ELLIPSIS_PARAM,
@@ -479,13 +479,10 @@ def _type_from_runtime(
     elif is_typing_name(val, "LiteralString"):
         return TypedValue(str, literal_only=True)
     elif hasattr(val, "__supertype__"):
-        if isinstance(val.__supertype__, type):
+        supertype = val.__supertype__
+        if isinstance(get_origin(supertype) or supertype, type):
             # NewType
             return NewTypeValue(val)
-        super_origin = get_origin(val.__supertype__)
-        if super_origin is tuple or is_typing_name(super_origin, "Tuple"):
-            # TODO figure out how to make NewTypes over tuples work
-            return AnyValue(AnySource.inference)
         else:
             ctx.show_error(f"Invalid NewType {val}")
             return AnyValue(AnySource.error)
@@ -935,7 +932,8 @@ class _DefaultContext(Context):
         evaluator: typing.Callable[[], Value],
         evaluate_type_params: typing.Callable[[], Sequence[TypeVarLike]],
     ) -> TypeAlias:
-        if self.visitor is not None:
+        # The key may be unhashable, e.g. Alias[[int, str]] for a ParamSpec alias
+        if self.visitor is not None and is_hashable(key):
             cache = self.visitor.checker.type_alias_cache
             if key in cache:
                 return cache[key]
@@ -1186,7 +1184,7 @@ def _value_of_origin_args(
     elif isinstance(origin, type):
         origin = _maybe_get_extra(origin)
         if args:
-            args_vals = [_type_from_runtime(val, ctx) for val in args]
+            args_vals = [_type_from_type_arg(val, ctx) for val in args]
             return GenericValue(origin, args_vals)
         else:
             return _maybe_typed_value(origin)
@@ -1259,7 +1257,7 @@ def _value_of_origin_args(
             return AnyValue(AnySource.error)
         return UnpackedValue(_type_from_runtime(args[0], ctx))
     elif is_instance_of_typing_name(origin, "TypeAliasType"):
-        args_vals = [_type_from_runtime(val, ctx) for val in args]
+        args_vals = [_type_from_type_arg(val, ctx) for val in args]
         alias_object = cast(Any, origin)
         alias = ctx.get_type_alias(
             val,
@@ -1274,6 +1272,15 @@ def _value_of_origin_args(
             f"Unrecognized annotation {origin}[{', '.join(map(repr, args))}]"
         )
         return AnyValue(AnySource.error)
+
+
+def _type_from_type_arg(arg: object, ctx: Context) -> Value:
+    # A list of types is the argument for a ParamSpec, e.g. Alias[[int, str]]
+    if type(arg) in (list, tuple):
+        return CallableValue(
+            Signature.make(_callable_args_from_runtime(arg, "ParamSpec", ctx))
+        )
+    return _type_from_runtime(arg, ctx)
 
 
 def _maybe_typed_value(val: Union[type, str]) -> Value:

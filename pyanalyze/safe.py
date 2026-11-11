@@ -10,6 +10,7 @@ import typing
 from collections.abc import Container, Sequence
 from typing import Any, NewType, Optional, TypeVar, Union
 
+import asynq
 import typing_extensions
 
 try:
@@ -37,6 +38,16 @@ def safe_hasattr(item: object, member: str) -> bool:
         # __getattr__ cause hasattr() to throw an error.
         return hasattr(item, member)
     except Exception:
+        return False
+
+
+def is_async_fn(obj: object) -> bool:
+    """Safe version of ``asynq.is_async_fn()``."""
+    try:
+        return asynq.is_async_fn(obj)
+    except Exception:
+        # This does certain attribute accesses, which may raise if the object has
+        # an unusual __getattr__ (e.g. lazily loaded client proxies).
         return False
 
 
