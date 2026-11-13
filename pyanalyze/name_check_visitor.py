@@ -6085,7 +6085,11 @@ except ImportError:
 else:
 
     def _is_safe_pydantic_class(typ: type) -> bool:
-        if not issubclass(typ, BaseModel):
+        # Not issubclass(): BaseModel's metaclass is an ABCMeta, and a negative
+        # ABC check walks every BaseModel subclass whenever the ABC caches are
+        # invalidated (any ABC.register() call, e.g. while importing modules).
+        # Only real subclasses have a usable model_config anyway.
+        if BaseModel not in typ.__mro__:
             return False
         # Pydantic 1 is unsupported but we shouldn't crash
         if not safe_hasattr(typ, "model_config"):

@@ -17,6 +17,8 @@
 - Support lists of types as arguments for `ParamSpec` parameters of generic
   classes and type aliases (e.g. `Alias[[int, str]]`), and calls through
   values annotated with a type alias
+- Speed up option lookups, Pydantic class detection, and `unite_values()`
+  calls with a single value
 - Update PEP 728 support to the latest version, using the `extra_items=`
   class argument instead of an `__extra_items__` key in the dict. (#855)
 - Add support for Python 3.13 (#824)

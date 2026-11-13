@@ -2895,6 +2895,18 @@ def unite_values(*values: Value) -> Value:
     """
     if not values:
         return NO_RETURN_VALUE
+    # Fast path for the very common single-argument call. Unions still take the
+    # slow path below so that they are flattened and deduplicated, and so that
+    # an annotation on a union is distributed over its members.
+    if len(values) == 1:
+        (value,) = values
+        if not isinstance(value, MultiValuedValue) and not (
+            isinstance(value, AnnotatedValue)
+            and isinstance(value.value, MultiValuedValue)
+        ):
+            if _is_unreachable(value):
+                return AnyValue(AnySource.unreachable)
+            return value
     # Make sure order is consistent; conceptually this is a set but
     # sets have unpredictable iteration order.
     hashable_vals = {}
