@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Speed up `unite_values()` calls with a single value
 - Drop support for Python 3.9, 3.10 and 3.11
 - Update PEP 728 support to the latest version, using the `extra_items=`
   class argument instead of an `__extra_items__` key in the dict. (#855)
