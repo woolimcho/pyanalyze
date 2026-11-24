@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- When a call passes `*args` or `**kwargs` of unknown length or keys (anything
+  but a tuple or `TypedDict`), try the overloads that take `*args` or `**kwargs`
+  first, as mypy does. `asyncio.gather(*coros)` is now `list[T]`, not `tuple[T]`
 - Add support for Python 3.14 and 3.15
 - Support lazily evaluated annotations (PEP 649) that refer to names
   defined only under `TYPE_CHECKING`
