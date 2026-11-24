@@ -7,6 +7,12 @@
   is now `list[tuple[A, B]]` instead of `list[SupportsGetItem[Any, Any]]`
 - Do not report `unsafe_comparison` when comparing sets, frozensets and
   dict key or item views whose element types overlap, as mypy does
+- Infer `dict.keys()`, `.values()` and `.items()` as `dict_keys`,
+  `dict_values` and `dict_items`, as typeshed does, so that methods such
+  as `__reversed__` are available. Methods that classes such as the dict
+  views get from their stub base classes are now found even though the
+  runtime class only registers with the ABC. Method stubs are now parsed
+  in the module of the stub rather than the runtime `__module__`
 - When a call passes `*args` or `**kwargs` of unknown length or keys (anything
   but a tuple or `TypedDict`), try the overloads that take `*args` or `**kwargs`
   first, as mypy does. `asyncio.gather(*coros)` is now `list[T]`, not `tuple[T]`
