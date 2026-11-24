@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Infer `dict.keys()`, `.values()` and `.items()` as `dict_keys`,
+  `dict_values` and `dict_items`, as typeshed does, so that methods such
+  as `__reversed__` are available. Methods that classes such as the dict
+  views get from their stub base classes are now found even though the
+  runtime class only registers with the ABC. Method stubs are now parsed
+  in the module of the stub rather than the runtime `__module__`
 - Add support for Python 3.14 and 3.15
 - Support lazily evaluated annotations (PEP 649) that refer to names
   defined only under `TYPE_CHECKING`
