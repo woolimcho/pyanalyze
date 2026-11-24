@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fix type inference when the same value is matched against a protocol
+  with different type arguments, e.g. `sorted(zip(a, b), key=itemgetter(1))`
+  is now `list[tuple[A, B]]` instead of `list[SupportsGetItem[Any, Any]]`
 - Add support for Python 3.14 and 3.15
 - Support lazily evaluated annotations (PEP 649) that refer to names
   defined only under `TYPE_CHECKING`
