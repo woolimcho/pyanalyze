@@ -5,6 +5,8 @@
 - Fix type inference when the same value is matched against a protocol
   with different type arguments, e.g. `sorted(zip(a, b), key=itemgetter(1))`
   is now `list[tuple[A, B]]` instead of `list[SupportsGetItem[Any, Any]]`
+- Do not report `unsafe_comparison` when comparing sets, frozensets and
+  dict key or item views whose element types overlap, as mypy does
 - When a call passes `*args` or `**kwargs` of unknown length or keys (anything
   but a tuple or `TypedDict`), try the overloads that take `*args` or `**kwargs`
   first, as mypy does. `asyncio.gather(*coros)` is now `list[T]`, not `tuple[T]`
