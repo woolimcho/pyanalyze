@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Accept any callable for `Callable[[Unpack[Ts]], T]` with a `TypeVarTuple`,
+  instead of reporting an error, and support `Unpack` of a tuple in `Callable`
+  parameter lists. This fixes false positives on `loop.run_in_executor()` and
+  `loop.call_soon()`
 - Add support for Python 3.14 and 3.15
 - Support lazily evaluated annotations (PEP 649) that refer to names
   defined only under `TYPE_CHECKING`
