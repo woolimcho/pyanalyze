@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Do not report `unsafe_comparison` when comparing sets, frozensets and
+  dict key or item views whose element types overlap, as mypy does
 - Add support for Python 3.14 and 3.15
 - Support lazily evaluated annotations (PEP 649) that refer to names
   defined only under `TYPE_CHECKING`
