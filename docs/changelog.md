@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Avoid executing a module twice when its parent package imports it
+- Make `register_error_code` idempotent
 - Add support for Python 3.14 and 3.15
 - Support lazily evaluated annotations (PEP 649) that refer to names
   defined only under `TYPE_CHECKING`
