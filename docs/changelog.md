@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Support `NewType` over generic aliases such as `list[int]`
+- Support lists of types as arguments for `ParamSpec` parameters of generic
+  classes and type aliases (e.g. `Alias[[int, str]]`), and calls through
+  values annotated with a type alias
+- Fix crash on `TypeAliasType` aliases with unhashable arguments and on
+  truthiness checks of PEP 695 type aliases
 - Add support for Python 3.14 and 3.15
 - Support lazily evaluated annotations (PEP 649) that refer to names
   defined only under `TYPE_CHECKING`
