@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix crash on classes inheriting from `Any`
+- Fix crash on objects whose `__getattr__` fails during asynq checks
 - Add support for Python 3.14 and 3.15
 - Support lazily evaluated annotations (PEP 649) that refer to names
   defined only under `TYPE_CHECKING`
